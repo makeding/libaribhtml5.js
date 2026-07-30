@@ -2,8 +2,21 @@ import './style.css'
 import { installRuntime } from './runtime/install'
 
 declare global {
+  type AribCaptionPacket = {
+    componentTag: number
+    payload?: string
+    dataType?: string
+    tmd?: string
+    data?: string
+  }
+
   interface Window {
     __ARIB_HTML5_INSTALL__?: (target: Window & typeof globalThis & Record<string, unknown>) => void
+    __ARIB_HTML5_CAPTION_BRIDGE__?: {
+      setTracks(componentTags: number[]): void
+      emit(packet: AribCaptionPacket): void
+      reset(): void
+    }
   }
 }
 
@@ -20,6 +33,25 @@ if (!iframe || !viewport || !videoSurface || !status || !urlLabel) {
 window.__ARIB_HTML5_INSTALL__ = installRuntime
 let logicalWidth = 3840
 let logicalHeight = 2160
+let captionComponentTags: number[] = []
+
+function postCaptionMessage(message: Record<string, unknown>): void {
+  iframe.contentWindow?.postMessage({ type: 'arib-caption', ...message }, window.location.origin)
+}
+
+window.__ARIB_HTML5_CAPTION_BRIDGE__ = {
+  setTracks(componentTags) {
+    captionComponentTags = [...new Set(componentTags.filter(Number.isInteger))]
+    postCaptionMessage({ event: 'tracks', componentTags: captionComponentTags })
+  },
+  emit(packet) {
+    postCaptionMessage({ event: 'data', ...packet })
+  },
+  reset() {
+    captionComponentTags = []
+    postCaptionMessage({ event: 'reset' })
+  },
+}
 
 const pages = {
   startup: '/sh4/40/001/startup/html/index.html',
@@ -70,6 +102,16 @@ function fitBroadcastCanvas(): void {
 new ResizeObserver(fitBroadcastCanvas).observe(viewport)
 fitBroadcastCanvas()
 
+iframe.addEventListener('load', () => {
+  try {
+    if (iframe.contentWindow?.location.origin === window.location.origin) return
+  } catch {
+    // Cross-origin communication pages cannot install the broadcast runtime.
+  }
+  videoSurface.style.display = 'none'
+  status.textContent = '通信ページ'
+})
+
 document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach((button) => {
   button.addEventListener('click', () => openPage(button.dataset.page as keyof typeof pages))
 })
@@ -115,6 +157,14 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('message', (event) => {
   if (event.origin !== window.location.origin) return
   if (event.data?.type !== 'arib-runtime') return
+  if (event.data.event === 'installed') {
+    postCaptionMessage({ event: 'tracks', componentTags: captionComponentTags })
+  }
+  if (event.data.event === 'navigation-blocked') {
+    status.textContent = '外部URLをブロックしました'
+    urlLabel.textContent = String(event.data.url ?? '')
+    return
+  }
   if (event.data.event === 'stage-style') {
     const color = String(event.data.backgroundColor ?? '')
     if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
