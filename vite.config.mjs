@@ -16,6 +16,16 @@ const runtimeBootstrap = `
 </script>
 `
 
+function deferStaticRomSoundSources(source) {
+  return source.replace(/<(?:audio|video|source)\b[^>]*>/gi, (tag) =>
+    tag.replace(
+      /\bsrc\s*=\s*(?:"(romsound:\/\/\d+)"|'(romsound:\/\/\d+)'|(romsound:\/\/\d+))/gi,
+      (_attribute, doubleQuoted, singleQuoted, unquoted) =>
+        `data-arib-romsound="${doubleQuoted ?? singleQuoted ?? unquoted}"`,
+    ),
+  )
+}
+
 function broadcastHtmlMiddleware() {
   const install = (server) => {
     server.middlewares.use(async (request, response, next) => {
@@ -27,9 +37,9 @@ function broadcastHtmlMiddleware() {
       const filename = path.resolve(broadcastRoot, `.${pathname}`)
       if (!filename.startsWith(`${broadcastRoot}${path.sep}`)) return next()
       try {
-        const source = await fs.readFile(filename, 'utf8')
-        const html = source.includes('<head>')
-          ? source.replace('<head>', `<head>${runtimeBootstrap}`)
+        const source = deferStaticRomSoundSources(await fs.readFile(filename, 'utf8'))
+        const html = /<head(?:\s[^>]*)?>/i.test(source)
+          ? source.replace(/<head(\s[^>]*)?>/i, (head) => `${head}${runtimeBootstrap}`)
           : `${runtimeBootstrap}${source}`
         response.statusCode = 200
         response.setHeader('Content-Type', 'text/html; charset=utf-8')

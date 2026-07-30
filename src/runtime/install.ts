@@ -135,6 +135,18 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
 
   const listeners = new Map<string, Set<(event: RuntimeEvent) => void>>()
   const eventIdListeners = new Set<() => void>()
+  type CacheEventListener = (path: string, event: string) => void
+  const cacheListeners = new Map<string, Set<CacheEventListener>>()
+  const storedResources = new Set<string>()
+  const addCacheListener = (path: string, listener: CacheEventListener) => {
+    if (!cacheListeners.has(path)) cacheListeners.set(path, new Set())
+    cacheListeners.get(path)?.add(listener)
+  }
+  const notifyCacheListener = (
+    path: string,
+    listener: CacheEventListener,
+    event = 'store_finished',
+  ) => target.queueMicrotask(() => listener(path, event))
   const is8k = target.location.pathname.startsWith('/sh8/')
   let programInfo: ProgramInfo = {
     original_network_id: 4,
@@ -308,12 +320,34 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       queueMicrotask(() => callback({ ...programInfo }))
     },
     cacheEvent: {
-      storeDataResource: (_url: string, callback?: (...args: unknown[]) => void) => {
-        callback?.('cached')
+      addCacheEventListener: (path: string, listener: CacheEventListener) => {
+        if (typeof listener !== 'function') return false
+        addCacheListener(path, listener)
+        if (storedResources.has(path)) notifyCacheListener(path, listener)
         return true
       },
-      releaseDataResource: () => true,
-      removeCacheEventListener: () => true,
+      storeDataResource: (path: string, listener?: CacheEventListener) => {
+        storedResources.add(path)
+        if (typeof listener === 'function') {
+          addCacheListener(path, listener)
+          notifyCacheListener(path, listener)
+        }
+        return true
+      },
+      releaseDataResource: (path?: string) => {
+        if (path === undefined) storedResources.clear()
+        else storedResources.delete(path)
+        return true
+      },
+      removeCacheEventListener: (path: string, listener?: CacheEventListener) => {
+        if (typeof listener === 'function') {
+          cacheListeners.get(path)?.delete(listener)
+          if (cacheListeners.get(path)?.size === 0) cacheListeners.delete(path)
+        } else {
+          cacheListeners.delete(path)
+        }
+        return true
+      },
     },
     streamEvent: {
       addGeneralEventMessageListener: (
