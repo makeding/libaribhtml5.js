@@ -1,4 +1,5 @@
 import { installRomSoundProtocol } from './romsound'
+import { installBroadcastClock, type BroadcastNowProvider } from './clock'
 import type {
   AribMediaPlane,
   AribMediaPlaneAdapter,
@@ -20,6 +21,8 @@ export type RuntimeOptions = {
   allowExternalNetwork?: boolean
   /** Bind the broadcast object to a browser, native, or compositor media plane. */
   mediaPlaneAdapter?: AribMediaPlaneAdapter
+  /** Return current broadcast time as Unix epoch milliseconds. */
+  now?: BroadcastNowProvider
 }
 
 type CaptionListener = (data: string) => void
@@ -68,6 +71,7 @@ function defineNavigatorProperty(target: Navigator, name: string, value: unknown
 export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = {}): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
   target.__ARIB_HTML5_RUNTIME__ = true
+  installBroadcastClock(target, options.now)
   installRomSoundProtocol(target)
 
   const runtimeId = target.crypto.randomUUID?.() ??

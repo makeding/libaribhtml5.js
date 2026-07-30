@@ -39,6 +39,10 @@ pnpm build:sdk
 データ放送へ入る時は `host.loadApplication()`、通常プレーヤーへ戻す時は
 `host.exitApplication()` を使用します。
 
+録画再生ではシステム時計ではなく、ストリームの NTP と再生位置を
+`host.setBroadcastClock()` へ渡します。変換例は
+[録画再生時の放送時計](docs/broadcast-clock.md)を参照してください。
+
 ## English
 
 Browser-hosted ARIB HTML5 receiver-runtime prototype. The initial demo serves the

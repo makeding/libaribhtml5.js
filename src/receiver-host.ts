@@ -29,6 +29,15 @@ export type AribCaptionPacket = {
   data?: string
 }
 
+export type AribBroadcastClock = {
+  /** Absolute broadcast time at the anchor, as Unix epoch milliseconds. */
+  epochMilliseconds: number
+  /** Media timeline value which corresponds to epochMilliseconds. */
+  mediaTimeSeconds?: number
+  /** Current playback position; enables pause, rate, and seek aware projection. */
+  currentMediaTimeSeconds?: () => number
+}
+
 export type AribReceiverHostOptions = {
   iframe: HTMLIFrameElement
   viewport: HTMLElement
@@ -71,6 +80,7 @@ export class AribReceiverHost {
   private logicalHeight = 2160
   private captionComponentTags: number[] = []
   private programInfo: ProgramInfo | null = null
+  private broadcastClock: (AribBroadcastClock & { monotonicMilliseconds: number }) | null = null
   private video: HTMLVideoElement | null = null
   private mediaPlaneEnabled = false
   private applicationExited = false
@@ -127,6 +137,7 @@ export class AribReceiverHost {
     installRuntime(target, {
       allowExternalNetwork: this.allowExternalNetwork,
       mediaPlaneAdapter: this.runtimeMediaPlaneAdapter,
+      now: () => this.getBroadcastTime(),
     })
   }
 
@@ -203,6 +214,54 @@ export class AribReceiverHost {
   setProgramInfo(value: ProgramInfo): void {
     this.programInfo = { ...value }
     this.postToRuntime('program-info', { value: this.programInfo })
+  }
+
+  /** Set a free-running broadcast clock from an absolute Unix time. */
+  setBroadcastTime(value: number | Date): void {
+    this.setBroadcastClock({
+      epochMilliseconds: value instanceof Date ? value.getTime() : value,
+    })
+  }
+
+  /** Set an absolute clock anchor, optionally projected from the media timeline. */
+  setBroadcastClock(value: AribBroadcastClock): void {
+    const epochMilliseconds = Number(value.epochMilliseconds)
+    const mediaTimeSeconds = value.mediaTimeSeconds === undefined
+      ? undefined
+      : Number(value.mediaTimeSeconds)
+    if (!Number.isFinite(epochMilliseconds)) {
+      throw new TypeError('broadcast epochMilliseconds must be finite')
+    }
+    if (mediaTimeSeconds !== undefined && !Number.isFinite(mediaTimeSeconds)) {
+      throw new TypeError('broadcast mediaTimeSeconds must be finite')
+    }
+    if (value.currentMediaTimeSeconds && mediaTimeSeconds === undefined) {
+      throw new TypeError('currentMediaTimeSeconds requires mediaTimeSeconds')
+    }
+    this.broadcastClock = {
+      ...value,
+      epochMilliseconds,
+      mediaTimeSeconds,
+      monotonicMilliseconds: this.ownerWindow.performance.now(),
+    }
+  }
+
+  clearBroadcastClock(): void {
+    this.broadcastClock = null
+  }
+
+  getBroadcastTime(): number {
+    const clock = this.broadcastClock
+    if (!clock) return Date.now()
+    if (clock.currentMediaTimeSeconds && clock.mediaTimeSeconds !== undefined) {
+      const currentMediaTime = Number(clock.currentMediaTimeSeconds())
+      if (Number.isFinite(currentMediaTime)) {
+        return clock.epochMilliseconds +
+          (currentMediaTime - clock.mediaTimeSeconds) * 1000
+      }
+    }
+    return clock.epochMilliseconds +
+      (this.ownerWindow.performance.now() - clock.monotonicMilliseconds)
   }
 
   emitStreamEvent(value: RuntimeEvent): void {
