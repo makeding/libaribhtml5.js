@@ -1,10 +1,12 @@
-type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
+export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
-type RuntimeEvent = {
+export type RuntimeEvent = {
   source: { event_message_tag: number }
   message_id: number
   private_data_byte: string
 }
+
+export type ProgramInfo = Record<string, unknown>
 
 type CaptionListener = (data: string) => void
 
@@ -53,9 +55,28 @@ export function installRuntime(target: RuntimeWindow): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
   target.__ARIB_HTML5_RUNTIME__ = true
 
+  const runtimeId = target.crypto.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  const postRuntime = (event: string, detail: Record<string, unknown> = {}) => {
+    target.parent?.postMessage({
+      type: 'arib-runtime',
+      runtimeId,
+      event,
+      ...detail,
+    }, '*')
+  }
+
   for (const [name, value] of Object.entries(keyValues)) target[name] = value
 
   const listeners = new Map<string, Set<(event: RuntimeEvent) => void>>()
+  const eventIdListeners = new Set<() => void>()
+  let programInfo: ProgramInfo = {
+    original_network_id: 4,
+    transport_stream_id: 11,
+    service_id: 101,
+    event_id: 1,
+    event_name: 'BS4Kデモ',
+  }
   const listenerKey = (source: { event_message_tag?: number }, id?: number) =>
     `${source?.event_message_tag ?? 0}:${id ?? 0}`
 
@@ -87,8 +108,8 @@ export function installRuntime(target: RuntimeWindow): void {
 
   target.addEventListener('message', (event) => {
     if (event.source !== target.parent || event.origin !== target.location.origin) return
-    if (event.data?.type !== 'arib-caption') return
-    if (event.data.event === 'tracks') {
+    if (event.data?.type !== 'arib-host' || event.data.runtimeId !== runtimeId) return
+    if (event.data.event === 'caption-tracks') {
       captionTracks.clear()
       for (const value of event.data.componentTags ?? []) {
         const componentTag = Number(value)
@@ -96,22 +117,34 @@ export function installRuntime(target: RuntimeWindow): void {
       }
       return
     }
-    if (event.data.event === 'reset') {
+    if (event.data.event === 'caption-reset') {
       captionTracks.clear()
       captionListeners.clear()
       return
     }
-    if (event.data.event !== 'data') return
-    const componentTag = Number(event.data.componentTag)
-    const payload = typeof event.data.payload === 'string'
-      ? event.data.payload
-      : JSON.stringify({
-          data_type: String(event.data.dataType ?? '0000'),
-          TMD: String(event.data.tmd ?? ''),
-          data: String(event.data.data ?? ''),
-        })
-    for (const [listener, registeredTag] of captionListeners) {
-      if (registeredTag === componentTag) listener(payload)
+    if (event.data.event === 'caption-data') {
+      const componentTag = Number(event.data.componentTag)
+      const payload = typeof event.data.payload === 'string'
+        ? event.data.payload
+        : JSON.stringify({
+            data_type: String(event.data.dataType ?? '0000'),
+            TMD: String(event.data.tmd ?? ''),
+            data: String(event.data.data ?? ''),
+          })
+      for (const [listener, registeredTag] of captionListeners) {
+        if (registeredTag === componentTag) listener(payload)
+      }
+      return
+    }
+    if (event.data.event === 'program-info') {
+      programInfo = { ...(event.data.value as ProgramInfo ?? {}) }
+      for (const listener of eventIdListeners) queueMicrotask(listener)
+      return
+    }
+    if (event.data.event === 'stream-event') {
+      const value = event.data.value as RuntimeEvent
+      const key = listenerKey(value?.source, value?.message_id)
+      for (const listener of listeners.get(key) ?? []) listener(value)
     }
   })
 
@@ -136,11 +169,9 @@ export function installRuntime(target: RuntimeWindow): void {
     } catch {
       // Keep the original value for diagnostics.
     }
-    target.parent?.postMessage({
-      type: 'arib-runtime',
-      event: 'navigation-blocked',
+    postRuntime('navigation-blocked', {
       url,
-    }, '*')
+    })
   }
   const isAllowedNavigation = (value: unknown): boolean => {
     try {
@@ -180,7 +211,7 @@ export function installRuntime(target: RuntimeWindow): void {
       return ownerApplication
     },
     destroyApplication: () => {
-      target.parent?.postMessage({ type: 'arib-runtime', event: 'destroy' }, '*')
+      postRuntime('destroy')
     },
   }
 
@@ -205,13 +236,7 @@ export function installRuntime(target: RuntimeWindow): void {
       queueMicrotask(() => callback('4194c4ae4730'))
     },
     getCurrentEventInformation: (callback: (value: unknown) => void) => {
-      queueMicrotask(() => callback({
-        original_network_id: 4,
-        transport_stream_id: 11,
-        service_id: 101,
-        event_id: 1,
-        event_name: 'BS4Kデモ',
-      }))
+      queueMicrotask(() => callback({ ...programInfo }))
     },
     cacheEvent: {
       storeDataResource: (_url: string, callback?: (...args: unknown[]) => void) => {
@@ -244,7 +269,16 @@ export function installRuntime(target: RuntimeWindow): void {
         else listeners.delete(key)
         return true
       },
-      removeEventIDUpdateListener: () => true,
+      addEventIDUpdateListener: (callback: () => void) => {
+        if (typeof callback !== 'function') return false
+        eventIdListeners.add(callback)
+        return true
+      },
+      removeEventIDUpdateListener: (callback?: () => void) => {
+        if (callback) eventIdListeners.delete(callback)
+        else eventIdListeners.clear()
+        return true
+      },
     },
   })
 
@@ -276,11 +310,9 @@ export function installRuntime(target: RuntimeWindow): void {
     const style = target.document.body
       ? target.getComputedStyle(target.document.body)
       : target.getComputedStyle(target.document.documentElement)
-    target.parent?.postMessage({
-      type: 'arib-runtime',
-      event: 'stage-style',
+    postRuntime('stage-style', {
       backgroundColor: style.backgroundColor,
-    }, '*')
+    })
   }
   let lastVideoPlane = ''
   const logicalViewport = () => {
@@ -297,11 +329,9 @@ export function installRuntime(target: RuntimeWindow): void {
       const message = JSON.stringify({ visible: false })
       if (message !== lastVideoPlane) {
         lastVideoPlane = message
-        target.parent?.postMessage({
-          type: 'arib-runtime',
-          event: 'video-plane',
+        postRuntime('video-plane', {
           visible: false,
-        }, '*')
+        })
       }
       return
     }
@@ -325,11 +355,9 @@ export function installRuntime(target: RuntimeWindow): void {
     const message = JSON.stringify(plane)
     if (message === lastVideoPlane) return
     lastVideoPlane = message
-    target.parent?.postMessage({
-      type: 'arib-runtime',
-      event: 'video-plane',
+    postRuntime('video-plane', {
       ...plane,
-    }, '*')
+    })
   }
   const exposeBroadcastVideo = () => {
     target.document
@@ -363,19 +391,13 @@ export function installRuntime(target: RuntimeWindow): void {
   target.setInterval(reportVideoPlane, 100)
 
   target.addEventListener('pagehide', () => {
-    target.parent?.postMessage({
-      type: 'arib-runtime',
-      event: 'video-plane',
-      visible: false,
-    }, '*')
+    postRuntime('unloading')
   })
 
   target.addEventListener('error', (event) => {
-    target.parent?.postMessage({
-      type: 'arib-runtime',
-      event: 'error',
+    postRuntime('error', {
       message: event.message,
-    }, '*')
+    })
   })
-  target.parent?.postMessage({ type: 'arib-runtime', event: 'installed' }, '*')
+  postRuntime('installed', { url: target.location.href })
 }

@@ -1,57 +1,43 @@
 import './style.css'
-import { installRuntime } from './runtime/install'
+import { AribReceiverHost } from './receiver-host'
+import type { RuntimeWindow } from './runtime/install'
 
 declare global {
-  type AribCaptionPacket = {
-    componentTag: number
-    payload?: string
-    dataType?: string
-    tmd?: string
-    data?: string
-  }
-
   interface Window {
-    __ARIB_HTML5_INSTALL__?: (target: Window & typeof globalThis & Record<string, unknown>) => void
-    __ARIB_HTML5_CAPTION_BRIDGE__?: {
-      setTracks(componentTags: number[]): void
-      emit(packet: AribCaptionPacket): void
-      reset(): void
-    }
+    __ARIB_HTML5_INSTALL__?: (target: RuntimeWindow) => void
+    aribReceiverHost?: AribReceiverHost
   }
 }
 
 const iframe = document.querySelector<HTMLIFrameElement>('#broadcast')!
 const viewport = document.querySelector<HTMLElement>('#viewport')!
 const videoSurface = document.querySelector<HTMLElement>('.video-surface')!
+const video = document.querySelector<HTMLVideoElement>('#broadcast-video')!
 const status = document.querySelector<HTMLElement>('#status')!
 const urlLabel = document.querySelector<HTMLElement>('#url')!
 
-if (!iframe || !viewport || !videoSurface || !status || !urlLabel) {
+if (!iframe || !viewport || !videoSurface || !video || !status || !urlLabel) {
   throw new Error('demo shell is incomplete')
 }
 
-window.__ARIB_HTML5_INSTALL__ = installRuntime
-let logicalWidth = 3840
-let logicalHeight = 2160
-let captionComponentTags: number[] = []
+const host = new AribReceiverHost({
+  iframe,
+  viewport,
+  videoSurface,
+  onStatus: (value) => { status.textContent = value },
+  onUrlChange: (value) => { urlLabel.textContent = value },
+})
+host.attachVideo(video)
+host.setProgramInfo({
+  original_network_id: 4,
+  transport_stream_id: 11,
+  service_id: 101,
+  event_id: 1,
+  event_name: 'BS4Kデモ',
+})
 
-function postCaptionMessage(message: Record<string, unknown>): void {
-  iframe.contentWindow?.postMessage({ type: 'arib-caption', ...message }, window.location.origin)
-}
-
-window.__ARIB_HTML5_CAPTION_BRIDGE__ = {
-  setTracks(componentTags) {
-    captionComponentTags = [...new Set(componentTags.filter(Number.isInteger))]
-    postCaptionMessage({ event: 'tracks', componentTags: captionComponentTags })
-  },
-  emit(packet) {
-    postCaptionMessage({ event: 'data', ...packet })
-  },
-  reset() {
-    captionComponentTags = []
-    postCaptionMessage({ event: 'reset' })
-  },
-}
+window.__ARIB_HTML5_INSTALL__ = (target) => host.installRuntime(target)
+window.aribReceiverHost = host
 
 const pages = {
   startup: '/sh4/40/001/startup/html/index.html',
@@ -59,64 +45,17 @@ const pages = {
 } as const
 
 function openPage(page: keyof typeof pages): void {
-  const url = pages[page]
-  status.textContent = page === 'startup' ? '透明アプリケーション' : '表示ページ'
-  urlLabel.textContent = url
-  // ARIB HTML5's normal document canvas is opaque white unless the page
-  // reports another color. A transparent autostart page is still covered by
-  // its full-screen video plane.
-  viewport.style.backgroundColor = '#fff'
-  Object.assign(videoSurface.style, {
-    display: 'none',
-    left: '0%',
-    top: '0%',
-    width: '100%',
-    height: '100%',
-  })
-  iframe.src = `${url}?runtime=${Date.now()}`
-}
-
-function dispatchKey(code: number): void {
-  const target = iframe.contentWindow
-  if (!target) return
-  for (const type of ['keydown', 'keyup']) {
-    const event = new KeyboardEvent(type, { bubbles: true, cancelable: true })
-    Object.defineProperties(event, {
-      keyCode: { value: code },
-      which: { value: code },
-    })
-    target.document.dispatchEvent(event)
-  }
-}
-
-function fitBroadcastCanvas(): void {
-  const scale = Math.min(
-    viewport.clientWidth / logicalWidth,
-    viewport.clientHeight / logicalHeight,
+  host.loadApplication(
+    pages[page],
+    page === 'startup' ? '透明アプリケーション' : '表示ページ',
   )
-  iframe.style.width = `${logicalWidth}px`
-  iframe.style.height = `${logicalHeight}px`
-  iframe.style.transform = `scale(${scale})`
 }
-
-new ResizeObserver(fitBroadcastCanvas).observe(viewport)
-fitBroadcastCanvas()
-
-iframe.addEventListener('load', () => {
-  try {
-    if (iframe.contentWindow?.location.origin === window.location.origin) return
-  } catch {
-    // Cross-origin communication pages cannot install the broadcast runtime.
-  }
-  videoSurface.style.display = 'none'
-  status.textContent = '通信ページ'
-})
 
 document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach((button) => {
   button.addEventListener('click', () => openPage(button.dataset.page as keyof typeof pages))
 })
 document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach((button) => {
-  button.addEventListener('click', () => dispatchKey(Number(button.dataset.key)))
+  button.addEventListener('click', () => host.dispatchKey(Number(button.dataset.key)))
 })
 
 window.addEventListener('keydown', (event) => {
@@ -151,55 +90,7 @@ window.addEventListener('keydown', (event) => {
   const code = mapping[event.key]
   if (code === undefined) return
   event.preventDefault()
-  dispatchKey(code)
-})
-
-window.addEventListener('message', (event) => {
-  if (event.origin !== window.location.origin) return
-  if (event.data?.type !== 'arib-runtime') return
-  if (event.data.event === 'installed') {
-    postCaptionMessage({ event: 'tracks', componentTags: captionComponentTags })
-  }
-  if (event.data.event === 'navigation-blocked') {
-    status.textContent = '外部URLをブロックしました'
-    urlLabel.textContent = String(event.data.url ?? '')
-    return
-  }
-  if (event.data.event === 'stage-style') {
-    const color = String(event.data.backgroundColor ?? '')
-    if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
-      viewport.style.backgroundColor = color
-    }
-    return
-  }
-  if (event.data.event === 'video-plane') {
-    if (!event.data.visible) {
-      videoSurface.style.display = 'none'
-      return
-    }
-    logicalWidth = Number(event.data.screenWidth) || 3840
-    logicalHeight = Number(event.data.screenHeight) || 2160
-    viewport.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`
-    fitBroadcastCanvas()
-    const percent = (value: number, extent: number) => `${value / extent * 100}%`
-    Object.assign(videoSurface.style, {
-      display: 'grid',
-      left: percent(event.data.x, logicalWidth),
-      top: percent(event.data.y, logicalHeight),
-      width: percent(event.data.width, logicalWidth),
-      height: percent(event.data.height, logicalHeight),
-    })
-    status.textContent = `映像 ${Math.round(event.data.width)}×${Math.round(event.data.height)}` +
-      ` / 位置 ${Math.round(event.data.x)},${Math.round(event.data.y)}`
-    return
-  }
-  const runtimeStatuses: Record<string, string> = {
-    installed: 'ランタイム導入済み',
-    destroy: 'アプリケーション終了',
-  }
-  status.textContent = event.data.event === 'error'
-    ? `ランタイムエラー：${event.data.message}`
-    : runtimeStatuses[event.data.event] ?? `ランタイム：${event.data.event}`
+  host.dispatchKey(code)
 })
 
 openPage('startup')
