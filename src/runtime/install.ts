@@ -1,3 +1,5 @@
+import { installRomSoundProtocol } from './romsound'
+
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
 export type RuntimeEvent = {
@@ -54,6 +56,7 @@ function defineNavigatorProperty(target: Navigator, name: string, value: unknown
 export function installRuntime(target: RuntimeWindow): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
   target.__ARIB_HTML5_RUNTIME__ = true
+  installRomSoundProtocol(target)
 
   const runtimeId = target.crypto.randomUUID?.() ??
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
@@ -70,12 +73,13 @@ export function installRuntime(target: RuntimeWindow): void {
 
   const listeners = new Map<string, Set<(event: RuntimeEvent) => void>>()
   const eventIdListeners = new Set<() => void>()
+  const is8k = target.location.pathname.startsWith('/sh8/')
   let programInfo: ProgramInfo = {
     original_network_id: 4,
     transport_stream_id: 11,
-    service_id: 101,
+    service_id: is8k ? 102 : 101,
     event_id: 1,
-    event_name: 'BS4Kデモ',
+    event_name: is8k ? 'BS8Kデモ' : 'BS4Kデモ',
   }
   const listenerKey = (source: { event_message_tag?: number }, id?: number) =>
     `${source?.event_message_tag ?? 0}:${id ?? 0}`
@@ -323,7 +327,8 @@ export function installRuntime(target: RuntimeWindow): void {
   }
   const reportVideoPlane = () => {
     const object = target.document.querySelector<HTMLElement>(
-      'object[type="video/x-arib2-broadcast"]',
+      'object[type="video/x-arib2-broadcast"], ' +
+      'object[data-arib-type="video/x-arib2-broadcast"]',
     )
     if (!object) {
       const message = JSON.stringify({ visible: false })
@@ -361,7 +366,10 @@ export function installRuntime(target: RuntimeWindow): void {
   }
   const exposeBroadcastVideo = () => {
     target.document
-      .querySelectorAll<BroadcastObject>('object[type="video/x-arib2-broadcast"]')
+      .querySelectorAll<BroadcastObject>(
+        'object[type="video/x-arib2-broadcast"], ' +
+        'object[data-arib-type="video/x-arib2-broadcast"]',
+      )
       .forEach((object) => {
         installBroadcastObjectApi(object)
         object.style.setProperty('opacity', '0', 'important')

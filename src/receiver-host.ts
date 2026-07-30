@@ -32,6 +32,7 @@ export type AribReceiverHostOptions = {
   onStatus?: (status: string) => void
   onUrlChange?: (url: string) => void
   onVideoPlane?: (plane: AribVideoPlane) => void
+  keepVideoVisible?: boolean
 }
 
 type RuntimeMessage = Record<string, unknown> & {
@@ -50,6 +51,7 @@ export class AribReceiverHost {
   private readonly onStatus?: (status: string) => void
   private readonly onUrlChange?: (url: string) => void
   private readonly onVideoPlane?: (plane: AribVideoPlane) => void
+  private readonly keepVideoVisible: boolean
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
   private logicalWidth = 3840
@@ -68,6 +70,7 @@ export class AribReceiverHost {
     this.onStatus = options.onStatus
     this.onUrlChange = options.onUrlChange
     this.onVideoPlane = options.onVideoPlane
+    this.keepVideoVisible = options.keepVideoVisible ?? false
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
@@ -267,7 +270,7 @@ export class AribReceiverHost {
 
   private hideVideoPlane(): void {
     Object.assign(this.videoSurface.style, {
-      display: 'none',
+      display: this.keepVideoVisible ? 'grid' : 'none',
       left: '0%',
       top: '0%',
       width: '100%',
