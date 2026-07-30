@@ -1,5 +1,41 @@
 # libaribhtml5
 
+[日本語](#日本語) | [English](#english)
+
+## 日本語
+
+ブラウザ上で動作する ARIB HTML5 受信機ランタイムのプロトタイプです。初期デモでは、
+展開済みの BS4K アプリケーションを放送時のパスで配信し、アプリケーションの
+スクリプトが実行される前に受信機 API のポリフィルを注入します。
+
+```sh
+pnpm install
+pnpm dev
+```
+
+Vite が出力した URL を開いてください。放送による自動起動アプリケーションには
+**透明起動ページ**を、表示ページを直接確認するには**表示ページ**を使用します。
+
+### 注意事項
+
+- 放送アプリケーションが利用する一部のオンラインデータは、ブラウザから放送局の
+  サーバーへ直接リクエストされます。現在のデモでは、安全のため、このような外部への
+  ネットワークリクエストをすべてブロックしています。
+- ACAS のシリアル番号は `0721 0721 0721 0724 9674` に固定してエミュレートしています。
+
+### SDK バンドル
+
+```sh
+pnpm build:sdk
+```
+
+このコマンドは `dist/sdk/libaribhtml5.js` を生成し、`AribReceiverHost` と
+`installRuntime` を持つ `window.ARIBHTML5` を公開します。受信機内蔵音は
+`src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、SDK のビルド時に
+すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。
+
+## English
+
 Browser-hosted ARIB HTML5 receiver-runtime prototype. The initial demo serves the
 extracted BS4K application under its broadcast path and injects receiver API
 polyfills before the application scripts execute.
@@ -12,7 +48,15 @@ pnpm dev
 Open the URL printed by Vite. Use **透明起動ページ** for the broadcast autostart
 application and **表示ページ** to inspect the visible page directly.
 
-## SDK bundle
+### Notes
+
+- Some online data used by broadcast applications is requested directly from the
+  browser to the broadcaster's servers. For safety, the current demo blocks all
+  such external network requests.
+- The ACAS serial number is emulated with the fixed value
+  `0721 0721 0721 0724 9674`.
+
+### SDK bundle
 
 ```sh
 pnpm build:sdk

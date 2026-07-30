@@ -378,12 +378,23 @@ export function installRuntime(target: RuntimeWindow): void {
       })
     reportVideoPlane()
   }
-  target.document.addEventListener('DOMContentLoaded', () => {
+  const startDocumentRuntime = () => {
     installNavigationPolicy()
     reportStageStyle()
     makeTransparent()
     exposeBroadcastVideo()
-  }, { once: true })
+  }
+
+  // Establish the host session before observing the parser.  A broadcast
+  // object can be inserted while this bootstrap script is still running; if
+  // its first video-plane report precedes "installed", the host has no
+  // runtime id to associate it with and must discard it.
+  postRuntime('installed', { url: target.location.href })
+  if (target.document.readyState === 'loading') {
+    target.document.addEventListener('DOMContentLoaded', startDocumentRuntime, { once: true })
+  } else {
+    queueMicrotask(startDocumentRuntime)
+  }
   target.document.addEventListener('click', (event) => {
     const element = event.target instanceof target.Element ? event.target : null
     const anchor = element?.closest<HTMLAnchorElement>('a[href]')
@@ -396,6 +407,9 @@ export function installRuntime(target: RuntimeWindow): void {
     childList: true,
     subtree: true,
   })
+  // Also synchronize once after the installed message even when the document
+  // has already been parsed and no mutation follows runtime installation.
+  queueMicrotask(exposeBroadcastVideo)
   target.setInterval(reportVideoPlane, 100)
 
   target.addEventListener('pagehide', () => {
@@ -407,5 +421,4 @@ export function installRuntime(target: RuntimeWindow): void {
       message: event.message,
     })
   })
-  postRuntime('installed', { url: target.location.href })
 }
