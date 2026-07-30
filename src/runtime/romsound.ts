@@ -37,40 +37,83 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
   if (target.__ARIB_HTML5_ROMSOUND__) return
   target.__ARIB_HTML5_ROMSOUND__ = true
 
-  const prototype = target.HTMLMediaElement?.prototype
-  if (!prototype) return
+  const mediaPrototype = target.HTMLMediaElement?.prototype
+  const elementPrototype = target.Element?.prototype
+  if (!mediaPrototype || !elementPrototype) return
 
-  const source = Object.getOwnPropertyDescriptor(prototype, 'src')
-  if (source?.get && source.set) {
-    Object.defineProperty(prototype, 'src', {
-      configurable: true,
-      enumerable: source.enumerable,
-      get: source.get,
-      set(value: string) {
-        source.set!.call(this, resolveRomSoundUrl(value) ?? value)
-      },
-    })
+  const resolve = (value: unknown) => resolveRomSoundUrl(value) ?? value
+  const isMediaSource = (element: unknown): element is HTMLMediaElement | HTMLSourceElement =>
+    element instanceof target.HTMLMediaElement ||
+    Boolean(target.HTMLSourceElement && element instanceof target.HTMLSourceElement)
+
+  // Attribute assignment bypasses the HTMLMediaElement.src property setter.
+  // This is also the path used by libraries which construct media elements
+  // from markup, so rewrite it synchronously before CSP sees romsound://.
+  const setAttribute = elementPrototype.setAttribute
+  elementPrototype.setAttribute = function(name: string, value: string): void {
+    const nextValue = name.toLowerCase() === 'src' && isMediaSource(this)
+      ? resolve(value)
+      : value
+    setAttribute.call(this, name, String(nextValue))
   }
 
-  const play = prototype.play
-  prototype.play = function(): Promise<void> {
-    const configured = this.getAttribute('src')
-    const resolved = resolveRomSoundUrl(configured)
-    if (resolved) source?.set?.call(this, resolved)
+  const setAttributeNS = elementPrototype.setAttributeNS
+  elementPrototype.setAttributeNS = function(
+    namespace: string | null,
+    qualifiedName: string,
+    value: string,
+  ): void {
+    const nextValue = qualifiedName.toLowerCase() === 'src' && isMediaSource(this)
+      ? resolve(value)
+      : value
+    setAttributeNS.call(this, namespace, qualifiedName, String(nextValue))
+  }
+
+  const patchSourceProperty = (prototype: object | undefined): PropertyDescriptor | undefined => {
+    if (!prototype) return undefined
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'src')
+    if (!descriptor?.get || !descriptor.set) return descriptor
+    Object.defineProperty(prototype, 'src', {
+      configurable: true,
+      enumerable: descriptor.enumerable,
+      get: descriptor.get,
+      set(value: string) {
+        descriptor.set!.call(this, resolve(value))
+      },
+    })
+    return descriptor
+  }
+
+  const mediaSource = patchSourceProperty(mediaPrototype)
+  patchSourceProperty(target.HTMLSourceElement?.prototype)
+
+  const play = mediaPrototype.play
+  mediaPrototype.play = function(): Promise<void> {
+    const resolved = resolveRomSoundUrl(this.getAttribute('src'))
+    if (resolved) mediaSource?.set?.call(this, resolved)
     return play.call(this)
   }
 
   const rewrite = (root: Node): void => {
-    const media: HTMLMediaElement[] = []
-    if (root instanceof target.HTMLMediaElement) media.push(root)
+    const sources: Array<HTMLMediaElement | HTMLSourceElement> = []
+    if (isMediaSource(root)) sources.push(root)
     if (root instanceof target.Element || root === target.document) {
-      media.push(...(root as ParentNode).querySelectorAll<HTMLMediaElement>(
-        'audio[src^="romsound://"], video[src^="romsound://"]',
+      sources.push(...(root as ParentNode).querySelectorAll<HTMLMediaElement | HTMLSourceElement>(
+        'audio[src^="romsound://"], video[src^="romsound://"], ' +
+        'source[src^="romsound://"], [data-arib-romsound]',
       ))
     }
-    for (const element of media) {
-      const resolved = resolveRomSoundUrl(element.getAttribute('src'))
-      if (resolved) source?.set?.call(element, resolved)
+    for (const element of sources) {
+      const deferred = element.getAttribute('data-arib-romsound')
+      const configured = deferred ?? element.getAttribute('src')
+      const resolved = resolveRomSoundUrl(configured)
+      if (!resolved) continue
+      if (element instanceof target.HTMLMediaElement && mediaSource?.set) {
+        mediaSource.set.call(element, resolved)
+      } else {
+        setAttribute.call(element, 'src', resolved)
+      }
+      if (deferred !== null) element.removeAttribute('data-arib-romsound')
     }
   }
 
@@ -82,7 +125,7 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
   })
   observer.observe(target.document.documentElement, {
     attributes: true,
-    attributeFilter: ['src'],
+    attributeFilter: ['src', 'data-arib-romsound'],
     childList: true,
     subtree: true,
   })

@@ -33,6 +33,8 @@ export type AribReceiverHostOptions = {
   onUrlChange?: (url: string) => void
   onVideoPlane?: (plane: AribVideoPlane) => void
   keepVideoVisible?: boolean
+  /** Allow broadcaster applications to use HTTP origins outside this host. */
+  allowExternalNetwork?: boolean
 }
 
 type RuntimeMessage = Record<string, unknown> & {
@@ -52,6 +54,7 @@ export class AribReceiverHost {
   private readonly onUrlChange?: (url: string) => void
   private readonly onVideoPlane?: (plane: AribVideoPlane) => void
   private readonly keepVideoVisible: boolean
+  private readonly allowExternalNetwork: boolean
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
   private logicalWidth = 3840
@@ -71,6 +74,7 @@ export class AribReceiverHost {
     this.onUrlChange = options.onUrlChange
     this.onVideoPlane = options.onVideoPlane
     this.keepVideoVisible = options.keepVideoVisible ?? false
+    this.allowExternalNetwork = options.allowExternalNetwork ?? false
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
@@ -80,7 +84,7 @@ export class AribReceiverHost {
   }
 
   installRuntime(target: RuntimeWindow): void {
-    installRuntime(target)
+    installRuntime(target, { allowExternalNetwork: this.allowExternalNetwork })
   }
 
   attachVideo(video: HTMLVideoElement): void {

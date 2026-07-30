@@ -20,7 +20,9 @@ function broadcastHtmlMiddleware() {
   const install = (server) => {
     server.middlewares.use(async (request, response, next) => {
       const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname)
-      if (!/^\/sh[48]\/.+\.html$/.test(pathname)) return next()
+      // MH-AIT supplies the entry path; neither it nor later HTML documents
+      // are required to use NHK's /sh4 and /sh8 directory convention.
+      if (!/\.html?$/i.test(pathname)) return next()
 
       const filename = path.resolve(broadcastRoot, `.${pathname}`)
       if (!filename.startsWith(`${broadcastRoot}${path.sep}`)) return next()

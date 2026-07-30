@@ -5,5 +5,5 @@ export type {
   AribVideoPlane,
 } from './receiver-host'
 export { installRuntime } from './runtime/install'
-export type { ProgramInfo, RuntimeEvent, RuntimeWindow } from './runtime/install'
+export type { ProgramInfo, RuntimeEvent, RuntimeOptions, RuntimeWindow } from './runtime/install'
 export { installRomSoundProtocol, resolveRomSoundUrl } from './runtime/romsound'

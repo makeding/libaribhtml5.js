@@ -34,6 +34,9 @@ pnpm build:sdk
 `src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、SDK のビルド時に
 すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。
 
+プレーヤーへ統合する際の映像レイヤー、サイズ・位置、ライフサイクル、字幕の共通契約は
+[メディアプレーン共通統合ガイド](docs/media-plane-integration.md)を参照してください。
+
 ## English
 
 Browser-hosted ARIB HTML5 receiver-runtime prototype. The initial demo serves the
@@ -66,3 +69,6 @@ This produces `dist/sdk/libaribhtml5.js` and exposes `window.ARIBHTML5` with
 `AribReceiverHost` and `installRuntime`. Receiver built-in sounds are maintained
 as individual MP3 files under `src/runtime/romsound/`; the SDK build inlines all
 of them as data URLs in the single JavaScript bundle.
+
+See the [common media-plane integration guide](docs/media-plane-integration.md)
+for the shared video layering, geometry, lifecycle, and caption contract.

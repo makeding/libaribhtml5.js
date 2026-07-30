@@ -10,6 +10,11 @@ export type RuntimeEvent = {
 
 export type ProgramInfo = Record<string, unknown>
 
+export type RuntimeOptions = {
+  /** Permit HTTP requests outside the receiver-managed application origin. */
+  allowExternalNetwork?: boolean
+}
+
 type CaptionListener = (data: string) => void
 
 type BroadcastObject = HTMLElement & {
@@ -53,7 +58,7 @@ function defineNavigatorProperty(target: Navigator, name: string, value: unknown
   })
 }
 
-export function installRuntime(target: RuntimeWindow): void {
+export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = {}): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
   target.__ARIB_HTML5_RUNTIME__ = true
   installRomSoundProtocol(target)
@@ -67,6 +72,63 @@ export function installRuntime(target: RuntimeWindow): void {
       event,
       ...detail,
     }, '*')
+  }
+
+  // Broadcast resources are mounted on the receiver-managed origin. External
+  // HTTP access represents the optional communication path and must fail
+  // immediately when the host is offline; otherwise broadcaster connection
+  // probes commonly wait for their full multi-second timeout.
+  if (!options.allowExternalNetwork) {
+    const isExternalUrl = (value: unknown): boolean => {
+      try {
+        const url = new URL(String(value), target.location.href)
+        return /^https?:$/.test(url.protocol) && url.origin !== target.location.origin
+      } catch {
+        return false
+      }
+    }
+
+    const xhrPrototype = target.XMLHttpRequest?.prototype
+    if (xhrPrototype) {
+      const blockedRequests = new WeakSet<XMLHttpRequest>()
+      const open = xhrPrototype.open
+      const send = xhrPrototype.send
+      Object.defineProperty(xhrPrototype, 'open', {
+        configurable: true,
+        writable: true,
+        value: function(this: XMLHttpRequest, method: string, url: string | URL, ...args: unknown[]) {
+          if (isExternalUrl(url)) blockedRequests.add(this)
+          else blockedRequests.delete(this)
+          return Reflect.apply(open, this, [method, url, ...args])
+        },
+      })
+      Object.defineProperty(xhrPrototype, 'send', {
+        configurable: true,
+        writable: true,
+        value: function(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+          if (!blockedRequests.has(this)) return send.call(this, body)
+          target.queueMicrotask(() => this.dispatchEvent(new target.ProgressEvent('error')))
+        },
+      })
+    }
+
+    const fetch = target.fetch?.bind(target)
+    if (fetch) {
+      target.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input instanceof target.Request ? input.url : input
+        if (isExternalUrl(url)) return Promise.reject(new TypeError('External network is offline'))
+        return fetch(input, init)
+      }
+    }
+
+    if (typeof target.navigator.sendBeacon === 'function') {
+      const sendBeacon = target.navigator.sendBeacon.bind(target.navigator)
+      Object.defineProperty(target.navigator, 'sendBeacon', {
+        configurable: true,
+        value: (url: string | URL, data?: BodyInit | null) =>
+          isExternalUrl(url) ? false : sendBeacon(url, data),
+      })
+    }
   }
 
   for (const [name, value] of Object.entries(keyValues)) target[name] = value
@@ -180,8 +242,11 @@ export function installRuntime(target: RuntimeWindow): void {
   const isAllowedNavigation = (value: unknown): boolean => {
     try {
       const url = new URL(String(value), target.location.href)
-      if (url.origin !== target.location.origin) return false
-      return /^\/(?:sh[48]|[4567][012])\//.test(url.pathname)
+      // Broadcast application paths are signalled by MH-AIT and are not tied
+      // to NHK's /sh4 or /sh8 directory convention. The host maps collected
+      // broadcast resources into this origin; this is its sandbox policy, not
+      // an implementation of the MH-AIT application-boundary descriptor.
+      return url.origin === target.location.origin && /^https?:$/.test(url.protocol)
     } catch {
       return false
     }
