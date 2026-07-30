@@ -1,149 +1,226 @@
-# メディアスロット統合ガイド
+# メディアスロットの使い方
 
-libaribhtml5 は映像そのものを描画せず、放送アプリケーション内の
-`object[type="video/x-arib2-broadcast"]` を「メディアスロット」として公開します。
-ランタイムの責務は object の検出、放送 API の導入、状態通知までです。デコード、MSE、
-再接続、実際の Surface は adapter の責務です。
+## まず結論
 
-## スロット契約
+通常は次のどれか一つを選びます。
 
-`AribMediaPlane` には次の情報が含まれます。
+| 用途 | 選ぶもの | できる重なり順 |
+| --- | --- | --- |
+| 通常ブラウザの demo / Web プレーヤー | `DomObjectMediaPlaneAdapter` | アプリ背景 `<` 映像 `<` アプリ UI |
+| ネイティブ Surface / plugin / compositor | 独自 `AribMediaPlaneAdapter` | compositor の能力に依存 |
+| 既存コードを当面維持 | `BehindIframeMediaPlaneAdapter` | 映像 `<` iframe 全体のみ |
 
-- `slotId`：同一 document 内で object を識別する ID
-- `visible`：object と祖先の表示状態、opacity、矩形から求めた可視性
-- `x` / `y` / `width` / `height`：アプリケーション論理画布上の CSS pixel
-- `screenWidth` / `screenHeight`：論理画布サイズ
-- `videoSource` / `audioSource`：object の `param` が指定する放送 source
-- `layer.documentOrder`：document 内での object の順序
-- `layer.stackingPath`：ルートから object までの position、z-index、opacity、transform
+caption ページを正しく表示するなら、1 番目または 2 番目が必要です。
+`BehindIframeMediaPlaneAdapter` では実現できません。
 
-座標と layer 情報は測定値です。runtime は特定の Surface 実装や単一の z-index へ変換しません。
-アプリケーションが object を移動、非表示、削除した場合は adapter と `onMediaPlane` の双方へ
-反映されます。
+## ブラウザへ組み込む最小コード
 
-## Adapter API
+普通の動画表示領域とデータ放送 iframe を同じ viewport に置きます。
 
-統合先は `AribMediaPlaneAdapter` を実装し、`AribReceiverHost` へ渡します。
+```html
+<div id="viewport">
+  <div id="normal-player">
+    <video id="video" autoplay muted playsinline></video>
+  </div>
+  <iframe id="broadcast" sandbox="allow-scripts allow-same-origin"></iframe>
+</div>
+```
+
+`DomObjectMediaPlaneAdapter` に既存の video と、データ放送を終了した時に video を戻す
+通常プレーヤー container を渡します。
 
 ```ts
-interface AribMediaPlaneAdapter {
-  readonly renderMode: 'in-object' | 'external'
-  mountMediaPlane(object: HTMLElement, plane: AribMediaPlane): void
-  updateMediaPlane(object: HTMLElement, plane: AribMediaPlane): void
-  unmountMediaPlane(): void
-}
+import {
+  AribReceiverHost,
+  DomObjectMediaPlaneAdapter,
+  type RuntimeWindow,
+} from 'libaribhtml5'
+
+const iframe = document.querySelector<HTMLIFrameElement>('#broadcast')!
+const viewport = document.querySelector<HTMLElement>('#viewport')!
+const normalPlayer = document.querySelector<HTMLElement>('#normal-player')!
+const video = document.querySelector<HTMLVideoElement>('#video')!
 
 const host = new AribReceiverHost({
   iframe,
   viewport,
-  mediaPlaneAdapter,
+  mediaPlaneAdapter: new DomObjectMediaPlaneAdapter({
+    media: video,
+    normalPlayerContainer: normalPlayer,
+  }),
 })
+
+window.__ARIB_HTML5_INSTALL__ = (child: RuntimeWindow) => {
+  host.installRuntime(child)
+}
 ```
 
-`mountMediaPlane` の object は iframe document に実在する要素です。同一 origin の runtime
-導入経路から直接 adapter へ渡され、`postMessage` で複製された値ではありません。
-`updateMediaPlane` は矩形、表示状態、source、layer のいずれかが変化した時に呼ばれます。
-object の削除、document 遷移、host の破棄では `unmountMediaPlane` が呼ばれます。各メソッドは
-重複呼び出しに対して安全にしてください。
-
-### `in-object`
-
-ブラウザで正しい DOM 前後関係が必要な場合に使います。実メディアを object の fallback
-content として挿入することで、object が本来持つ document order と stacking context を
-そのまま利用できます。demo の `DomObjectMediaPlaneAdapter` は親 document の `<video>` を
-object へ移動し、遷移時には parking container へ戻します。
+データ放送への出入りは次の二つだけです。
 
 ```ts
-const adapter = new DomObjectMediaPlaneAdapter({
-  media: video,
-  parkingContainer: videoSurface,
-})
+// データ放送へ入る。video は放送 object の中へ移動する。
+host.loadApplication('/sh4/40/001/startup/html/index.html')
+
+// データ放送を終了する。iframe を閉じ、video を通常プレーヤーへ戻して表示する。
+host.exitApplication()
 ```
 
-この方式なら、たとえば caption ページが要求する次の順序を同じ iframe 内で表現できます。
+ページ内の「戻る」はアプリケーション内遷移です。`exitApplication()` ではありません。
+テレビ UI の「データ放送終了」操作、チャンネル変更、または
+`applicationManager.destroyApplication()` を受けた時だけ `exitApplication()` を呼びます。
+
+## 実行時に何が起きるか
 
 ```text
-アプリケーション背景 < 放送映像 object < 字幕説明ボタン
+通常プレーヤー
+  host.loadApplication()
+        ↓
+runtime が broadcast object を検出
+  mountMediaPlane(object, plane)
+        ↓
+データ放送ページ内で object が移動・非表示
+  updateMediaPlane(object, plane)
+        ↓
+別のデータ放送 document へ遷移
+  unmountMediaPlane('document-unload') → 次ページで mount
+        ↓
+host.exitApplication()
+  unmountMediaPlane('application-exit')
+        ↓
+通常プレーヤーへ video / Surface を戻す
 ```
 
-### `external`
+`DomObjectMediaPlaneAdapter` は `document-unload` では video を通常 container へ一時退避して
+非表示にします。`application-exit` の時だけ通常 container を全画面表示します。この区別に
+より、データ放送のページ遷移中に普通のプレーヤー UI が点滅しません。
 
-ネイティブ Surface、ブラウザ plugin、専用 compositor を使う場合に指定します。adapter は
-`AribMediaPlane` の矩形と `stackingPath` を実装固有の合成 API へ渡します。runtime は元の
-object を透明なスロットとして残します。DOM の z-index 値をそのままネイティブ z-order と
-みなさず、compositor 側で iframe 内容との合成規則を定義してください。
+## 独自 adapter を書く
 
-## 背面 iframe fallback の制限
+ネイティブ Surface や compositor を使う場合の最小骨格です。
 
-`BehindIframeMediaPlaneAdapter` は既存統合向けの簡易互換 adapter です。映像 surface を
-iframe の背面へ置き、スロット矩形を percentage へ変換します。
+```ts
+import type {
+  AribMediaPlane,
+  AribMediaPlaneAdapter,
+  AribMediaPlaneUnmountReason,
+} from 'libaribhtml5'
 
-```text
-映像 surface < iframe 全体
+class NativeSurfaceAdapter implements AribMediaPlaneAdapter {
+  readonly renderMode = 'external' as const
+
+  mountMediaPlane(object: HTMLElement, plane: AribMediaPlane): void {
+    nativeSurface.bindBroadcastSource(plane.videoSource, plane.audioSource)
+    this.updateMediaPlane(object, plane)
+  }
+
+  updateMediaPlane(_object: HTMLElement, plane: AribMediaPlane): void {
+    nativeSurface.setVisible(plane.visible)
+    nativeSurface.setLogicalCanvas(plane.screenWidth, plane.screenHeight)
+    nativeSurface.setRect(plane.x, plane.y, plane.width, plane.height)
+    nativeSurface.setApplicationLayer(plane.layer)
+  }
+
+  unmountMediaPlane(reason: AribMediaPlaneUnmountReason): void {
+    if (reason === 'application-exit') {
+      nativeSurface.returnToNormalPlayer()
+    } else if (reason === 'host-destroy') {
+      nativeSurface.release()
+    } else {
+      nativeSurface.hide()
+    }
+  }
+}
 ```
 
-この構成では iframe 内部の要素を映像の前後へ分けられません。透明部分から映像を見せ、
-アプリ全体を映像より前に置くページに限って使用できます。caption ページのような
-「アプリ背景 < 映像 < アプリ UI」は再現不能です。これは fallback であり、共通の推奨
-合成方式ではありません。
+`unmountMediaPlane` の reason は次の意味です。
 
-`videoSurface` だけを `AribReceiverHost` に渡した旧 API は、この adapter を自動生成します。
-`attachVideo()` と `keepVideoVisible` も互換用に残していますが、新規統合では明示的な adapter
-を使用してください。
-
-## ライフサイクル
-
-放送アプリケーションの document とメディアセッションは別のライフサイクルです。
-
-| 状態 | adapter |
+| reason | adapter の動作 |
 | --- | --- |
-| object を初めて検出 | `mountMediaPlane(object, plane)` |
-| 矩形・表示・source・layer が変化 | `updateMediaPlane(object, plane)` |
-| object は存在するが非表示 | `updateMediaPlane(... visible: false)` |
-| object 削除 / pagehide / host destroy | `unmountMediaPlane()` |
+| `slot-removed` | decoder は維持し、Surface を隠す |
+| `document-unload` | 次のデータ放送ページに備えて一時退避する |
+| `application-exit` | 通常プレーヤーへ映像を戻して表示する |
+| `host-destroy` | listener、Surface、decoder など所有資源を解放する |
 
-adapter は単なるアプリページ遷移で decoder を破棄する必要はありません。`unmountMediaPlane`
-では表示先との関連だけを解除し、チャンネル、番組、source が変わった時に統合側が decoder、
-字幕 track、`setProgramInfo()` を更新します。
+各メソッドは同じ状態で複数回呼ばれても壊れないように実装してください。
 
-通常の放送字幕は映像 renderer と同じメディア plane に属します。一方、D Data の字幕
-コンテンツはアプリケーション DOM です。`setCaptionTracks()` / `pushCaption()` から iframe
-へ渡し、親プレーヤー字幕として二重描画しないでください。
+## `AribMediaPlane` の読み方
 
-## 確認項目
+```ts
+type AribMediaPlane = {
+  slotId: string
+  visible: boolean
+  x: number
+  y: number
+  width: number
+  height: number
+  screenWidth: number
+  screenHeight: number
+  videoSource?: string
+  audioSource?: string
+  layer: {
+    documentOrder: number
+    stackingPath: Array<{
+      tagName: string
+      id?: string
+      position: string
+      zIndex: string
+      display: string
+      visibility: string
+      opacity: number
+      transform: string
+    }>
+  }
+}
+```
 
-- object の位置、サイズ、visibility、削除が adapter へ反映される。
-- object 前後にあるアプリ DOM が期待通り映像の前後へ描画される。
-- stacking context を作る祖先の z-index、opacity、transform が `stackingPath` に含まれる。
-- document 遷移で古い Surface が残らず、decoder セッションは必要に応じて維持される。
-- `BehindIframeMediaPlaneAdapter` を使用する場合、その合成制限が製品要件上許容される。
+`x`、`y`、`width`、`height` は iframe の表示 pixel ではなく、アプリケーションの
+論理画布上の CSS pixel です。たとえば `screenWidth=3840`、`x=480` なら左端は 12.5% です。
+
+`stackingPath` は html から object までの祖先を順番に格納します。ネイティブ compositor は
+単一の `zIndex` だけで判断せず、この path と `documentOrder` を使ってアプリケーションとの
+合成方針を決めます。ブラウザ用 `DomObjectMediaPlaneAdapter` では DOM 自身が合成するため、
+この変換は不要です。
+
+## なぜ iframe 背面方式では不足するか
+
+iframe と親 document の間で選べるのは次の順序だけです。
+
+```text
+映像 < iframe 全体
+```
+
+一方、caption ページの要求は次です。
+
+```text
+iframe 内の背景 < 映像 < iframe 内の字幕説明ボタン
+```
+
+親側の z-index を何度変更しても、iframe の内部を二つに分割できません。
+`DomObjectMediaPlaneAdapter` は video を object の fallback content にすることで解決します。
+ネイティブ統合では compositor が同じ役割を担当します。
+
+旧 API の `videoSurface` だけを `AribReceiverHost` に渡すと、互換のため自動的に
+`BehindIframeMediaPlaneAdapter` が選択されます。`attachVideo()` と `keepVideoVisible` も
+旧統合用です。新規コードでは使用しないでください。
+
+## 字幕
+
+通常の放送字幕は video / native Surface と同じプレーヤー側 renderer に置きます。
+したがって media plane の移動、非表示、通常プレーヤーへの復帰へ一緒に追従します。
+
+D Data の字幕コンテンツはアプリケーション DOM です。`setCaptionTracks()` と
+`pushCaption()` で iframe へ渡し、通常の放送字幕として親側へ二重描画しないでください。
 
 ---
 
-# Media-slot integration guide (English)
+## English summary
 
-libaribhtml5 treats `object[type="video/x-arib2-broadcast"]` as a media slot. The
-runtime reports its identity, visibility, logical-canvas geometry, sources,
-document order, and stacking path. Decoding and rendering belong to an
-`AribMediaPlaneAdapter` supplied by the host.
+Use `DomObjectMediaPlaneAdapter` for browser integration, implement
+`AribMediaPlaneAdapter` for a native Surface/compositor, and use
+`BehindIframeMediaPlaneAdapter` only as a limited compatibility fallback.
 
-An `in-object` adapter renders at the actual object node. The demo uses
-`DomObjectMediaPlaneAdapter` to adopt its `<video>` into the object's fallback
-content, preserving application DOM ordering. This supports layouts such as:
-
-```text
-application background < broadcast video < application controls
-```
-
-An `external` adapter binds the slot to a native Surface, plugin, or compositor.
-It must translate `AribMediaPlane.layer.stackingPath` into that renderer's own
-composition model.
-
-`BehindIframeMediaPlaneAdapter` is compatibility-only. It can render only
-`video < entire iframe`; it cannot interleave video with elements inside the
-iframe. Passing the legacy `videoSurface` option without an explicit adapter
-selects this fallback automatically.
-
-Adapters receive `mountMediaPlane(object, plane)`, `updateMediaPlane(object,
-plane)`, and `unmountMediaPlane()`. They should detach presentation on document
-navigation without unnecessarily destroying the decoder or media session.
+Call `host.loadApplication()` to enter data-broadcast mode. Call
+`host.exitApplication()` to leave it; this produces
+`unmountMediaPlane('application-exit')`, hides the iframe, and lets the adapter
+return video to the ordinary player. A data-broadcast document navigation uses
+`document-unload` instead and must not flash the ordinary player UI.

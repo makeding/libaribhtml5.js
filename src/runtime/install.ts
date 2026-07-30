@@ -496,10 +496,10 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       })
     }
   }
-  const unmountMediaPlane = () => {
+  const unmountMediaPlane = (reason: 'slot-removed' | 'document-unload') => {
     if (activeMediaObject) setExternalPlaceholder(activeMediaObject, false)
     if (mediaPlaneAdapter) {
-      callMediaPlaneAdapter(() => mediaPlaneAdapter.unmountMediaPlane())
+      callMediaPlaneAdapter(() => mediaPlaneAdapter.unmountMediaPlane(reason))
     }
     activeMediaObject = null
   }
@@ -510,7 +510,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     )
     if (!object) {
       const removedSlotId = activeMediaObject ? slotIdFor(activeMediaObject) : ''
-      if (activeMediaObject) unmountMediaPlane()
+      if (activeMediaObject) unmountMediaPlane('slot-removed')
       const screen = logicalViewport()
       const plane: AribMediaPlane = {
         slotId: removedSlotId,
@@ -558,7 +558,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     }
     const message = JSON.stringify(plane)
     if (object !== activeMediaObject) {
-      if (activeMediaObject) unmountMediaPlane()
+      if (activeMediaObject) unmountMediaPlane('slot-removed')
       activeMediaObject = object
       if (mediaPlaneAdapter) {
         callMediaPlaneAdapter(() => mediaPlaneAdapter.mountMediaPlane(object, plane))
@@ -608,7 +608,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   target.setInterval(reportMediaPlane, 100)
 
   target.addEventListener('pagehide', () => {
-    unmountMediaPlane()
+    unmountMediaPlane('document-unload')
     postRuntime('unloading')
   })
 

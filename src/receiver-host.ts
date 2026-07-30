@@ -9,6 +9,7 @@ import {
   type AribMediaPlane,
   type AribMediaPlaneAdapter,
   type AribMediaPlaneLayer,
+  type AribMediaPlaneUnmountReason,
 } from './media-plane'
 
 export type {
@@ -16,6 +17,7 @@ export type {
   AribMediaPlaneAdapter,
   AribMediaPlaneLayer,
   AribMediaPlaneStackEntry,
+  AribMediaPlaneUnmountReason,
   AribVideoPlane,
 } from './media-plane'
 
@@ -61,6 +63,7 @@ export class AribReceiverHost {
   private readonly onMediaPlane?: (plane: AribMediaPlane) => void
   private readonly onVideoPlane?: (plane: AribMediaPlane) => void
   private readonly mediaPlaneAdapter?: AribMediaPlaneAdapter
+  private readonly runtimeMediaPlaneAdapter?: AribMediaPlaneAdapter
   private readonly allowExternalNetwork: boolean
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
@@ -69,6 +72,8 @@ export class AribReceiverHost {
   private captionComponentTags: number[] = []
   private programInfo: ProgramInfo | null = null
   private video: HTMLVideoElement | null = null
+  private mediaPlaneEnabled = false
+  private applicationExited = false
   private destroyed = false
 
   constructor(options: AribReceiverHostOptions) {
@@ -87,6 +92,27 @@ export class AribReceiverHost {
           keepVisible: options.keepVideoVisible,
         })
       : undefined)
+    const mediaPlaneAdapter = this.mediaPlaneAdapter
+    this.runtimeMediaPlaneAdapter = mediaPlaneAdapter
+      ? {
+          renderMode: mediaPlaneAdapter.renderMode,
+          mountMediaPlane: (object, plane) => {
+            if (this.mediaPlaneEnabled && !this.destroyed) {
+              mediaPlaneAdapter.mountMediaPlane(object, plane)
+            }
+          },
+          updateMediaPlane: (object, plane) => {
+            if (this.mediaPlaneEnabled && !this.destroyed) {
+              mediaPlaneAdapter.updateMediaPlane(object, plane)
+            }
+          },
+          unmountMediaPlane: (reason) => {
+            if (this.mediaPlaneEnabled && !this.destroyed) {
+              mediaPlaneAdapter.unmountMediaPlane(reason)
+            }
+          },
+        }
+      : undefined
     this.allowExternalNetwork = options.allowExternalNetwork ?? false
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
@@ -97,9 +123,10 @@ export class AribReceiverHost {
   }
 
   installRuntime(target: RuntimeWindow): void {
+    this.mediaPlaneEnabled = !this.destroyed && !this.applicationExited
     installRuntime(target, {
       allowExternalNetwork: this.allowExternalNetwork,
-      mediaPlaneAdapter: this.mediaPlaneAdapter,
+      mediaPlaneAdapter: this.runtimeMediaPlaneAdapter,
     })
   }
 
@@ -119,12 +146,26 @@ export class AribReceiverHost {
     if (resolved.origin !== this.origin) {
       throw new Error(`External broadcast application URL is not allowed: ${resolved.href}`)
     }
-    this.invalidateRuntime()
+    this.applicationExited = false
+    this.iframe.style.removeProperty('display')
+    this.invalidateRuntime('document-unload')
     this.viewport.style.backgroundColor = '#fff'
     this.onStatus?.(status)
     this.onUrlChange?.(resolved.pathname)
     resolved.searchParams.set('runtime', Date.now().toString())
     this.iframe.src = resolved.href
+  }
+
+  /** Leave data-broadcast mode and restore media to the ordinary player. */
+  exitApplication(status = 'データ放送終了'): void {
+    this.assertAlive()
+    if (this.applicationExited) return
+    this.applicationExited = true
+    this.invalidateRuntime('application-exit')
+    this.iframe.style.display = 'none'
+    this.iframe.src = 'about:blank'
+    this.onUrlChange?.('')
+    this.onStatus?.(status)
   }
 
   dispatchKey(code: number): void {
@@ -174,17 +215,18 @@ export class AribReceiverHost {
     this.ownerWindow.removeEventListener('message', this.handleRuntimeMessage)
     this.iframe.removeEventListener('load', this.handleFrameLoad)
     this.resizeObserver.disconnect()
-    this.invalidateRuntime()
+    this.invalidateRuntime('host-destroy')
     this.video = null
   }
 
   private readonly handleFrameLoad = (): void => {
+    if (this.applicationExited) return
     try {
       if (this.iframe.contentWindow?.location.origin === this.origin) return
     } catch {
       // A cross-origin page cannot participate in this receiver session.
     }
-    this.invalidateRuntime()
+    this.invalidateRuntime('document-unload')
     this.onStatus?.('通信ページをブロックしました')
   }
 
@@ -205,7 +247,7 @@ export class AribReceiverHost {
 
     switch (message.event) {
       case 'unloading':
-        this.invalidateRuntime()
+        this.invalidateRuntime('document-unload')
         this.onStatus?.('ページ遷移中')
         return
       case 'navigation-blocked':
@@ -224,8 +266,7 @@ export class AribReceiverHost {
         this.applyMediaPlane(message)
         return
       case 'destroy':
-        this.invalidateRuntime()
-        this.onStatus?.('アプリケーション終了')
+        this.exitApplication('アプリケーション終了')
         return
       case 'error':
         this.onStatus?.(`ランタイムエラー：${String(message.message ?? '')}`)
@@ -296,13 +337,10 @@ export class AribReceiverHost {
     }, this.origin)
   }
 
-  private invalidateRuntime(): void {
+  private invalidateRuntime(reason: AribMediaPlaneUnmountReason): void {
     this.activeRuntimeId = null
-    this.hideVideoPlane()
-  }
-
-  private hideVideoPlane(): void {
-    this.mediaPlaneAdapter?.unmountMediaPlane()
+    this.mediaPlaneEnabled = false
+    this.mediaPlaneAdapter?.unmountMediaPlane(reason)
   }
 
   private fitBroadcastCanvas(): void {

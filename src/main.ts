@@ -27,7 +27,7 @@ const host = new AribReceiverHost({
   videoSurface,
   mediaPlaneAdapter: new DomObjectMediaPlaneAdapter({
     media: video,
-    parkingContainer: videoSurface,
+    normalPlayerContainer: videoSurface,
   }),
   onStatus: (value) => { status.textContent = value },
   onUrlChange: (value) => { urlLabel.textContent = value },
@@ -57,6 +57,9 @@ function openPage(page: keyof typeof pages): void {
 
 document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach((button) => {
   button.addEventListener('click', () => openPage(button.dataset.page as keyof typeof pages))
+})
+document.querySelector<HTMLButtonElement>('[data-action="exit"]')?.addEventListener('click', () => {
+  host.exitApplication()
 })
 document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach((button) => {
   button.addEventListener('click', () => host.dispatchKey(Number(button.dataset.key)))

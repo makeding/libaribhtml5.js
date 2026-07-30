@@ -12,6 +12,7 @@ export type {
   AribMediaPlaneAdapter,
   AribMediaPlaneLayer,
   AribMediaPlaneStackEntry,
+  AribMediaPlaneUnmountReason,
   AribVideoPlane,
   BehindIframeMediaPlaneAdapterOptions,
   DomObjectMediaPlaneAdapterOptions,

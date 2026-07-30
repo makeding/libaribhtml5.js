@@ -36,6 +36,8 @@ pnpm build:sdk
 
 プレーヤーへ統合する際のメディアスロット、adapter、レイヤー、ライフサイクル、字幕の契約は
 [メディアプレーン共通統合ガイド](docs/media-plane-integration.md)を参照してください。
+データ放送へ入る時は `host.loadApplication()`、通常プレーヤーへ戻す時は
+`host.exitApplication()` を使用します。
 
 ## English
 

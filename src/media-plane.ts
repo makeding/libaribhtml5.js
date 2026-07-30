@@ -31,6 +31,12 @@ export type AribMediaPlane = {
 /** @deprecated Use AribMediaPlane. */
 export type AribVideoPlane = AribMediaPlane
 
+export type AribMediaPlaneUnmountReason =
+  | 'slot-removed'
+  | 'document-unload'
+  | 'application-exit'
+  | 'host-destroy'
+
 export interface AribMediaPlaneAdapter {
   /**
    * `in-object` renders at the actual object position in the application DOM.
@@ -39,11 +45,14 @@ export interface AribMediaPlaneAdapter {
   readonly renderMode: 'in-object' | 'external'
   mountMediaPlane(object: HTMLElement, plane: AribMediaPlane): void
   updateMediaPlane(object: HTMLElement, plane: AribMediaPlane): void
-  unmountMediaPlane(): void
+  unmountMediaPlane(reason: AribMediaPlaneUnmountReason): void
 }
 
 export type DomObjectMediaPlaneAdapterOptions = {
   media: HTMLElement
+  /** Container used by the ordinary player outside data-broadcast mode. */
+  normalPlayerContainer?: HTMLElement
+  /** @deprecated Use normalPlayerContainer. */
   parkingContainer?: HTMLElement
 }
 
@@ -55,12 +64,12 @@ export class DomObjectMediaPlaneAdapter implements AribMediaPlaneAdapter {
   readonly renderMode = 'in-object' as const
 
   private readonly media: HTMLElement
-  private readonly parkingContainer?: HTMLElement
+  private readonly normalPlayerContainer?: HTMLElement
   private mountedObject: HTMLElement | null = null
 
   constructor(options: DomObjectMediaPlaneAdapterOptions) {
     this.media = options.media
-    this.parkingContainer = options.parkingContainer
+    this.normalPlayerContainer = options.normalPlayerContainer ?? options.parkingContainer
     this.media.dataset.aribMediaPlaneContent = ''
     Object.assign(this.media.style, {
       display: 'block',
@@ -74,7 +83,7 @@ export class DomObjectMediaPlaneAdapter implements AribMediaPlaneAdapter {
 
   mountMediaPlane(object: HTMLElement, plane: AribMediaPlane): void {
     this.mountedObject = object
-    if (this.parkingContainer) this.parkingContainer.style.display = 'none'
+    if (this.normalPlayerContainer) this.normalPlayerContainer.style.display = 'none'
     if (this.media.parentElement !== object) object.append(this.media)
     this.media.style.visibility = plane.visible ? 'visible' : 'hidden'
   }
@@ -87,14 +96,21 @@ export class DomObjectMediaPlaneAdapter implements AribMediaPlaneAdapter {
     this.media.style.visibility = plane.visible ? 'visible' : 'hidden'
   }
 
-  unmountMediaPlane(): void {
+  unmountMediaPlane(reason: AribMediaPlaneUnmountReason): void {
     this.mountedObject = null
-    this.media.style.visibility = 'hidden'
-    if (this.parkingContainer) {
-      if (this.media.parentElement !== this.parkingContainer) {
-        this.parkingContainer.replaceChildren(this.media)
+    const returnToNormalPlayer = reason === 'application-exit'
+    this.media.style.visibility = returnToNormalPlayer ? 'visible' : 'hidden'
+    if (this.normalPlayerContainer) {
+      if (this.media.parentElement !== this.normalPlayerContainer) {
+        this.normalPlayerContainer.replaceChildren(this.media)
       }
-      this.parkingContainer.style.display = 'none'
+      Object.assign(this.normalPlayerContainer.style, {
+        display: returnToNormalPlayer ? 'grid' : 'none',
+        left: '0%',
+        top: '0%',
+        width: '100%',
+        height: '100%',
+      })
     } else {
       this.media.remove()
     }
@@ -129,9 +145,10 @@ export class BehindIframeMediaPlaneAdapter implements AribMediaPlaneAdapter {
     this.apply(plane)
   }
 
-  unmountMediaPlane(): void {
+  unmountMediaPlane(reason: AribMediaPlaneUnmountReason): void {
+    const visible = reason === 'application-exit' || this.keepVisible
     Object.assign(this.surface.style, {
-      display: this.keepVisible ? 'grid' : 'none',
+      display: visible ? 'grid' : 'none',
       left: '0%',
       top: '0%',
       width: '100%',
@@ -141,7 +158,7 @@ export class BehindIframeMediaPlaneAdapter implements AribMediaPlaneAdapter {
 
   private apply(plane: AribMediaPlane): void {
     if (!plane.visible) {
-      this.unmountMediaPlane()
+      this.unmountMediaPlane('slot-removed')
       return
     }
     const percent = (value: number, extent: number) => `${value / extent * 100}%`

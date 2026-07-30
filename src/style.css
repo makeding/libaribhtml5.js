@@ -116,7 +116,8 @@ button { font: inherit; }
 }
 
 .remote-status span { color: #91a4b7; font-size: 12px; }
-.page-switcher, .utility-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.page-switcher { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.utility-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
 .page-switcher button { font-size: 12px; }
 .color-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 12px; }
 .color-keys button { font-size: 22px; color: white; }
