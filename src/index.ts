@@ -22,4 +22,8 @@ export { installRuntime } from './runtime/install'
 export type { ProgramInfo, RuntimeEvent, RuntimeOptions, RuntimeWindow } from './runtime/install'
 export { installBroadcastClock } from './runtime/clock'
 export type { BroadcastNowProvider } from './runtime/clock'
-export { installRomSoundProtocol, resolveRomSoundUrl } from './runtime/romsound'
+export {
+  deferRomSoundMarkup,
+  installRomSoundProtocol,
+  resolveRomSoundUrl,
+} from './runtime/romsound'
