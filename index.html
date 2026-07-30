@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ARIB HTML5 ランタイムデモ</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="toolbar">
+        <div>
+          <strong>ARIB HTML5 Runtime</strong>
+          <span id="status">ランタイム準備完了</span>
+        </div>
+      </header>
+      <div class="workbench">
+        <section id="viewport" class="viewport">
+          <div class="video-surface">
+            <video id="broadcast-video" autoplay muted playsinline></video>
+          </div>
+          <div class="caption-surface" aria-hidden="true"></div>
+          <iframe id="broadcast" title="BS4K データ放送アプリケーション"></iframe>
+        </section>
+        <aside class="remote" aria-label="データ放送リモコン">
+          <div class="remote-status">
+            <strong>データ放送</strong>
+            <span>BS4K / サービス101</span>
+          </div>
+          <div class="page-switcher">
+            <button data-page="startup">透明起動ページ</button>
+            <button data-page="top">表示ページ</button>
+          </div>
+          <div class="color-keys">
+            <button class="blue" data-key="406" aria-label="青">●</button>
+            <button class="red" data-key="403" aria-label="赤">●</button>
+            <button class="green" data-key="404" aria-label="緑">●</button>
+            <button class="yellow" data-key="405" aria-label="黄">●</button>
+          </div>
+          <div class="dpad">
+            <button class="up" data-key="38" aria-label="上">▲</button>
+            <button class="left" data-key="37" aria-label="左">◀</button>
+            <button class="enter" data-key="13">決定</button>
+            <button class="right" data-key="39" aria-label="右">▶</button>
+            <button class="down" data-key="40" aria-label="下">▼</button>
+          </div>
+          <div class="utility-keys">
+            <button data-key="457">d データ</button>
+            <button data-key="461">戻る</button>
+          </div>
+          <div class="number-keys">
+            <button data-key="49">1</button><button data-key="50">2</button><button data-key="51">3</button>
+            <button data-key="52">4</button><button data-key="53">5</button><button data-key="54">6</button>
+            <button data-key="55">7</button><button data-key="56">8</button><button data-key="57">9</button>
+            <button data-key="410">10</button><button data-key="411">11</button><button data-key="412">12</button>
+            <button class="zero" data-key="48">0</button>
+          </div>
+        </aside>
+      </div>
+      <footer>
+        <span>キーボード：方向キー / Enter / Backspace / D / R G Y B / 0–9</span>
+        <code id="url"></code>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
