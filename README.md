@@ -34,7 +34,7 @@ pnpm build:sdk
 `src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、SDK のビルド時に
 すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。
 
-プレーヤーへ統合する際の映像レイヤー、サイズ・位置、ライフサイクル、字幕の共通契約は
+プレーヤーへ統合する際のメディアスロット、adapter、レイヤー、ライフサイクル、字幕の契約は
 [メディアプレーン共通統合ガイド](docs/media-plane-integration.md)を参照してください。
 
 ## English

@@ -1,158 +1,149 @@
-# メディアプレーン共通統合ガイド
+# メディアスロット統合ガイド
 
-この文書は、ARIB HTML5 アプリケーションを通常のブラウザ用プレーヤーへ重ねる際の
-共通契約を定義します。対象は映像の表示・位置・重なり順とプレーヤー字幕です。ストリームの
-デコード、MSE の復旧、再接続方式はプレーヤー固有の責務であり、この契約には含めません。
+libaribhtml5 は映像そのものを描画せず、放送アプリケーション内の
+`object[type="video/x-arib2-broadcast"]` を「メディアスロット」として公開します。
+ランタイムの責務は object の検出、放送 API の導入、状態通知までです。デコード、MSE、
+再接続、実際の Surface は adapter の責務です。
 
-## プレーンの重なり順
+## スロット契約
 
-同じ `.viewport` の中では、次の順序を固定します。
+`AribMediaPlane` には次の情報が含まれます。
 
-| 前後関係 | プレーン | 現在の要素 | 用途 |
-| --- | --- | --- | --- |
-| 前面 | 放送アプリケーション | `#broadcast` | アプリケーションの HTML、メニュー、案内 |
-| 背面 | 放送映像 | `.video-surface` | 実映像を表示する `<video>` |
-| 最背面 | ステージ背景 | `.viewport` | アプリケーションが指定した背景色 |
+- `slotId`：同一 document 内で object を識別する ID
+- `visible`：object と祖先の表示状態、opacity、矩形から求めた可視性
+- `x` / `y` / `width` / `height`：アプリケーション論理画布上の CSS pixel
+- `screenWidth` / `screenHeight`：論理画布サイズ
+- `videoSource` / `audioSource`：object の `param` が指定する放送 source
+- `layer.documentOrder`：document 内での object の順序
+- `layer.stackingPath`：ルートから object までの position、z-index、opacity、transform
 
-推奨値は、映像 `z-index: 0`、アプリケーション `z-index: 1` です。
-値そのものではなく、この相対順序を統合先でも維持してください。
+座標と layer 情報は測定値です。runtime は特定の Surface 実装や単一の z-index へ変換しません。
+アプリケーションが object を移動、非表示、削除した場合は adapter と `onMediaPlane` の双方へ
+反映されます。
 
-```css
-.viewport { position: relative; overflow: hidden; }
-.video-surface { position: absolute; z-index: 0; pointer-events: none; }
-#broadcast { position: absolute; z-index: 1; background: transparent; }
-.broadcast-video { display: block; width: 100%; height: 100%; object-fit: contain; }
+## Adapter API
+
+統合先は `AribMediaPlaneAdapter` を実装し、`AribReceiverHost` へ渡します。
+
+```ts
+interface AribMediaPlaneAdapter {
+  readonly renderMode: 'in-object' | 'external'
+  mountMediaPlane(object: HTMLElement, plane: AribMediaPlane): void
+  updateMediaPlane(object: HTMLElement, plane: AribMediaPlane): void
+  unmountMediaPlane(): void
+}
+
+const host = new AribReceiverHost({
+  iframe,
+  viewport,
+  mediaPlaneAdapter,
+})
 ```
 
-放送アプリケーション内の `object[type="video/x-arib2-broadcast"]` は映像の表示領域を
-指定するプレースホルダーです。ランタイムはこの要素を透明にし、実映像は宿主側の
-`.video-surface` に表示します。iframe 自体も透明にすることで、アプリケーションの
-透明部分から背面の映像が見え、不透明なメニューや案内は映像より前に表示されます。
+`mountMediaPlane` の object は iframe document に実在する要素です。同一 origin の runtime
+導入経路から直接 adapter へ渡され、`postMessage` で複製された値ではありません。
+`updateMediaPlane` は矩形、表示状態、source、layer のいずれかが変化した時に呼ばれます。
+object の削除、document 遷移、host の破棄では `unmountMediaPlane` が呼ばれます。各メソッドは
+重複呼び出しに対して安全にしてください。
 
-ブラウザ標準の `<video controls>` は使用しないでください。標準コントロールは
-ブラウザ固有の合成レイヤーを作ることがあり、放送アプリケーションとの重なり順を
-一貫して制御できません。操作 UI は viewport の外側に置くか、専用の宿主プレーンを
-別途定義します。
+### `in-object`
 
-## 映像のサイズと位置
+ブラウザで正しい DOM 前後関係が必要な場合に使います。実メディアを object の fallback
+content として挿入することで、object が本来持つ document order と stacking context を
+そのまま利用できます。demo の `DomObjectMediaPlaneAdapter` は親 document の `<video>` を
+object へ移動し、遷移時には parking container へ戻します。
 
-`AribVideoPlane` の `x`、`y`、`width`、`height` は、放送アプリケーションの
-論理画布上の CSS ピクセルです。`screenWidth` と `screenHeight` は、その論理画布の
-大きさです。座標原点は左上です。
+```ts
+const adapter = new DomObjectMediaPlaneAdapter({
+  media: video,
+  parkingContainer: videoSurface,
+})
+```
+
+この方式なら、たとえば caption ページが要求する次の順序を同じ iframe 内で表現できます。
 
 ```text
-left   = x      / screenWidth  * 100%
-top    = y      / screenHeight * 100%
-width  = width  / screenWidth  * 100%
-height = height / screenHeight * 100%
+アプリケーション背景 < 放送映像 object < 字幕説明ボタン
 ```
 
-たとえば、論理画布 `3840 x 2160` に対して映像が `2880 x 1620 / 位置 480,54` の場合、
-宿主上の矩形は `left: 12.5%`、`top: 2.5%`、`width: 75%`、`height: 75%` です。
+### `external`
 
-統合先は次の条件を守ります。
+ネイティブ Surface、ブラウザ plugin、専用 compositor を使う場合に指定します。adapter は
+`AribMediaPlane` の矩形と `stackingPath` を実装固有の合成 API へ渡します。runtime は元の
+object を透明なスロットとして残します。DOM の z-index 値をそのままネイティブ z-order と
+みなさず、compositor 側で iframe 内容との合成規則を定義してください。
 
-- iframe と映像面は、必ず同じ viewport、原点、アスペクト比を共有する。
-- 外側の表示サイズが変わっても、両方へ同じスケールを適用する。片方だけを拡大・移動しない。
-- 映像面の矩形は `object` の矩形に一致させる。プレーヤーのコントロールや黒帯を矩形計算へ含めない。
-- `visible: false`、要素の削除、`display: none`、`visibility: hidden`、または幅・高さ 0 の場合は映像面を隠す。
-- 不正な数値や論理画布外の矩形を受け取った場合は表示せず、診断情報を残す。負数やはみ出しを暗黙に補正しない。
+## 背面 iframe fallback の制限
 
-`<video>` の `object-fit` は映像面の座標契約とは別です。現在の demo は `contain` を
-使用します。統合先で `fill` や `cover` を選ぶ場合も、`.video-surface` 自体の位置と
-大きさは変更しません。
+`BehindIframeMediaPlaneAdapter` は既存統合向けの簡易互換 adapter です。映像 surface を
+iframe の背面へ置き、スロット矩形を percentage へ変換します。
+
+```text
+映像 surface < iframe 全体
+```
+
+この構成では iframe 内部の要素を映像の前後へ分けられません。透明部分から映像を見せ、
+アプリ全体を映像より前に置くページに限って使用できます。caption ページのような
+「アプリ背景 < 映像 < アプリ UI」は再現不能です。これは fallback であり、共通の推奨
+合成方式ではありません。
+
+`videoSurface` だけを `AribReceiverHost` に渡した旧 API は、この adapter を自動生成します。
+`attachVideo()` と `keepVideoVisible` も互換用に残していますが、新規統合では明示的な adapter
+を使用してください。
 
 ## ライフサイクル
 
-放送アプリケーションのページ遷移と、映像ストリームのセッションは別のライフサイクルです。
-ページ遷移のたびにプレーヤーを破棄すると映像が途切れるため、通常は `<video>` と
-プレーヤーを保持し、映像面だけを表示・非表示にします。
+放送アプリケーションの document とメディアセッションは別のライフサイクルです。
 
-| イベント | 映像面 | プレーヤー |
-| --- | --- | --- |
-| `attachVideo()` | 非表示のまま接続 | 接続済み |
-| `loadApplication()` | 直ちに非表示 | 原則維持 |
-| runtime `installed` | 最初の plane 通知まで非表示 | 原則維持 |
-| `video-plane: visible` | 指定矩形で表示 | 必要なら source を選択 |
-| `video-plane: hidden` | 非表示 | 停止・破棄しない |
-| `unloading` / `destroy` / blocked frame | 非表示 | 原則維持 |
-| host `destroy()` | 非表示・切断 | 統合側で解放 |
+| 状態 | adapter |
+| --- | --- |
+| object を初めて検出 | `mountMediaPlane(object, plane)` |
+| 矩形・表示・source・layer が変化 | `updateMediaPlane(object, plane)` |
+| object は存在するが非表示 | `updateMediaPlane(... visible: false)` |
+| object 削除 / pagehide / host destroy | `unmountMediaPlane()` |
 
-チャンネル変更、番組変更、またはストリーム URL の変更は、ページ遷移とは別に統合側が
-判断します。その場合だけ、必要に応じてプレーヤーを再ロードし、`resetCaptions()`、
-`setCaptionTracks()`、`setProgramInfo()` の順で新しい番組状態を設定します。
+adapter は単なるアプリページ遷移で decoder を破棄する必要はありません。`unmountMediaPlane`
+では表示先との関連だけを解除し、チャンネル、番組、source が変わった時に統合側が decoder、
+字幕 track、`setProgramInfo()` を更新します。
 
-`keepVideoVisible` は「アプリケーションが映像 object を持たない間も全画面映像を残す」
-受信機向けの選択肢です。アプリケーションの object による表示制御を再現する demo では
-既定値 `false` を使用します。
+通常の放送字幕は映像 renderer と同じメディア plane に属します。一方、D Data の字幕
+コンテンツはアプリケーション DOM です。`setCaptionTracks()` / `pushCaption()` から iframe
+へ渡し、親プレーヤー字幕として二重描画しないでください。
 
-## 字幕
+## 確認項目
 
-通常の放送字幕はプレーヤーの機能として扱います。字幕 renderer を別の受信機プレーンには
-分離せず、`<video>` またはプレーヤー自身のコンテナ内に置きます。したがって字幕は
-`video-plane` の位置・大きさ・表示状態を自動的に共有し、別の座標同期 API は必要ありません。
-
-D Data の「字幕コンテンツ」は通常の放送字幕とは別物です。`setCaptionTracks()` と
-`pushCaption()` で runtime へデータを渡し、放送アプリケーションが
-`isCaptionExistent()` / `addCaptionListener()` を通じて iframe 内に描画します。
-これはアプリケーション DOM の一部であり、親ページのプレーヤー字幕へ移動しません。
-
-番組またはプレーヤーの字幕 track が変わった場合は、プレーヤー側で古い cue と遅延状態を
-消してから新しい track を有効にします。単なる D Data ページ遷移では、番組が同一なら
-プレーヤーの字幕 renderer を再起動しません。
-
-## 統合時の確認項目
-
-- 全画面映像の上へアプリケーションのメニューを開き、メニュー全体が映像より前に出る。
-- `2880 x 1620 / 位置 480,54` の映像が論理画布上の指定矩形と一致する。
-- object の移動、リサイズ、非表示、削除が映像面へ反映される。
-- viewport のリサイズ後もアプリケーション、映像、プレーヤー字幕の相対位置がずれない。
-- アプリケーション遷移中は映像面が隠れ、旧ページの位置が一瞬残らない。
-- 通常の放送字幕がプレーヤーの映像領域と一緒に移動・拡大縮小・非表示になる。
-- D Data の字幕コンテンツを通常の放送字幕として二重描画しない。
-- 外部通信やデコードエラーが発生しても、媒体プレーンの状態とは別に診断できる。
+- object の位置、サイズ、visibility、削除が adapter へ反映される。
+- object 前後にあるアプリ DOM が期待通り映像の前後へ描画される。
+- stacking context を作る祖先の z-index、opacity、transform が `stackingPath` に含まれる。
+- document 遷移で古い Surface が残らず、decoder セッションは必要に応じて維持される。
+- `BehindIframeMediaPlaneAdapter` を使用する場合、その合成制限が製品要件上許容される。
 
 ---
 
-# Common media-plane integration guide (English)
+# Media-slot integration guide (English)
 
-This contract covers video visibility, geometry, stacking, and captions when an
-ARIB HTML5 application is hosted by a browser player. Stream decoding, MSE
-recovery, and reconnect policy remain player-specific concerns.
+libaribhtml5 treats `object[type="video/x-arib2-broadcast"]` as a media slot. The
+runtime reports its identity, visibility, logical-canvas geometry, sources,
+document order, and stacking path. Decoding and rendering belong to an
+`AribMediaPlaneAdapter` supplied by the host.
 
-The required back-to-front order is: stage background, video surface, then the
-application iframe. The recommended z-index values are `0` and `1` for video
-and application respectively. The
-broadcast video object is only a geometry placeholder; it is made transparent
-inside the iframe while the real video is rendered behind the transparent
-application plane. Do not use native `<video controls>` in receiver mode.
-
-`AribVideoPlane` geometry is expressed in the application's logical canvas. Map
-it to the common viewport using percentages:
+An `in-object` adapter renders at the actual object node. The demo uses
+`DomObjectMediaPlaneAdapter` to adopt its `<video>` into the object's fallback
+content, preserving application DOM ordering. This supports layouts such as:
 
 ```text
-left   = x      / screenWidth  * 100%
-top    = y      / screenHeight * 100%
-width  = width  / screenWidth  * 100%
-height = height / screenHeight * 100%
+application background < broadcast video < application controls
 ```
 
-The iframe and video surface must share the same origin, aspect ratio, and
-scale. A `2880 x 1620` plane at `480,54` in a `3840 x 2160` canvas
-therefore maps to `12.5%, 2.5%, 75%, 75%`. Hide the surface when the object is
-missing or invisible. Reject invalid or out-of-bounds geometry rather than
-silently changing the application's layout.
+An `external` adapter binds the slot to a native Surface, plugin, or compositor.
+It must translate `AribMediaPlane.layer.stackingPath` into that renderer's own
+composition model.
 
-Application navigation and the media session have separate lifecycles. Hide the
-video surface while a new runtime is loading, but normally keep the player and
-`<video>` alive. Show it only after a visible plane notification. Destroy the
-player only when the host or media session ends, or when a source change requires
-it. On a program change, reset captions before installing the new track and
-program metadata.
+`BehindIframeMediaPlaneAdapter` is compatibility-only. It can render only
+`video < entire iframe`; it cannot interleave video with elements inside the
+iframe. Passing the legacy `videoSurface` option without an explicit adapter
+selects this fallback automatically.
 
-Normal broadcast subtitles belong to the player and stay inside its video or
-player container, so they automatically share the `video-plane` geometry and
-visibility. D Data caption content is separate: `setCaptionTracks()` and
-`pushCaption()` deliver it to the iframe for `isCaptionExistent()` /
-`addCaptionListener()`. It remains application DOM and must not be duplicated as
-a parent-page subtitle layer.
+Adapters receive `mountMediaPlane(object, plane)`, `updateMediaPlane(object,
+plane)`, and `unmountMediaPlane()`. They should detach presentation on document
+navigation without unnecessarily destroying the decoder or media session.

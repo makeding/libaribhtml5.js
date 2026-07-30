@@ -1,4 +1,9 @@
 import { installRomSoundProtocol } from './romsound'
+import type {
+  AribMediaPlane,
+  AribMediaPlaneAdapter,
+  AribMediaPlaneStackEntry,
+} from '../media-plane'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
@@ -13,6 +18,8 @@ export type ProgramInfo = Record<string, unknown>
 export type RuntimeOptions = {
   /** Permit HTTP requests outside the receiver-managed application origin. */
   allowExternalNetwork?: boolean
+  /** Bind the broadcast object to a browser, native, or compositor media plane. */
+  mediaPlaneAdapter?: AribMediaPlaneAdapter
 }
 
 type CaptionListener = (data: string) => void
@@ -417,36 +424,125 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       backgroundColor: style.backgroundColor,
     })
   }
-  let lastVideoPlane = ''
+  const mediaPlaneAdapter = options.mediaPlaneAdapter
+  const mediaObjectIds = new WeakMap<HTMLElement, string>()
+  const externalObjectOpacity = new WeakMap<HTMLElement, {
+    value: string
+    priority: string
+    computed: number
+  }>()
+  let nextMediaObjectId = 1
+  let activeMediaObject: HTMLElement | null = null
+  let lastMediaPlane = ''
   const logicalViewport = () => {
     const content = target.document.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content ?? ''
     const width = Number(content.match(/(?:^|,)\s*width\s*=\s*(\d+)/i)?.[1] ?? 3840)
     const height = Number(content.match(/(?:^|,)\s*height\s*=\s*(\d+)/i)?.[1] ?? 2160)
     return { width, height }
   }
-  const reportVideoPlane = () => {
+  const slotIdFor = (object: HTMLElement): string => {
+    const existing = mediaObjectIds.get(object)
+    if (existing) return existing
+    const slotId = `media-plane-${nextMediaObjectId++}`
+    mediaObjectIds.set(object, slotId)
+    return slotId
+  }
+  const describeStackingPath = (object: HTMLElement): AribMediaPlaneStackEntry[] => {
+    const path: AribMediaPlaneStackEntry[] = []
+    let element: HTMLElement | null = object
+    while (element) {
+      const style = target.getComputedStyle(element)
+      path.push({
+        tagName: element.tagName.toLowerCase(),
+        ...(element.id ? { id: element.id } : {}),
+        position: style.position,
+        zIndex: style.zIndex,
+        display: style.display,
+        visibility: style.visibility,
+        opacity: externalObjectOpacity.get(element)?.computed ?? Number(style.opacity),
+        transform: style.transform,
+      })
+      element = element.parentElement
+    }
+    return path.reverse()
+  }
+  const setExternalPlaceholder = (object: HTMLElement, enabled: boolean) => {
+    if (enabled) {
+      if (!externalObjectOpacity.has(object)) {
+        externalObjectOpacity.set(object, {
+          value: object.style.getPropertyValue('opacity'),
+          priority: object.style.getPropertyPriority('opacity'),
+          computed: Number(target.getComputedStyle(object).opacity),
+        })
+      }
+      if (object.style.getPropertyValue('opacity') !== '0' ||
+          object.style.getPropertyPriority('opacity') !== 'important') {
+        object.style.setProperty('opacity', '0', 'important')
+      }
+      return
+    }
+    const original = externalObjectOpacity.get(object)
+    if (!original) return
+    if (original.value) object.style.setProperty('opacity', original.value, original.priority)
+    else object.style.removeProperty('opacity')
+    externalObjectOpacity.delete(object)
+  }
+  const callMediaPlaneAdapter = (callback: () => void) => {
+    try {
+      callback()
+    } catch (error) {
+      postRuntime('error', {
+        message: `Media-plane adapter failed: ${String(error)}`,
+      })
+    }
+  }
+  const unmountMediaPlane = () => {
+    if (activeMediaObject) setExternalPlaceholder(activeMediaObject, false)
+    if (mediaPlaneAdapter) {
+      callMediaPlaneAdapter(() => mediaPlaneAdapter.unmountMediaPlane())
+    }
+    activeMediaObject = null
+  }
+  const reportMediaPlane = () => {
     const object = target.document.querySelector<HTMLElement>(
       'object[type="video/x-arib2-broadcast"], ' +
       'object[data-arib-type="video/x-arib2-broadcast"]',
     )
     if (!object) {
-      const message = JSON.stringify({ visible: false })
-      if (message !== lastVideoPlane) {
-        lastVideoPlane = message
-        postRuntime('video-plane', {
-          visible: false,
-        })
+      const removedSlotId = activeMediaObject ? slotIdFor(activeMediaObject) : ''
+      if (activeMediaObject) unmountMediaPlane()
+      const screen = logicalViewport()
+      const plane: AribMediaPlane = {
+        slotId: removedSlotId,
+        visible: false,
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        screenWidth: screen.width,
+        screenHeight: screen.height,
+        layer: { documentOrder: -1, stackingPath: [] },
+      }
+      const message = JSON.stringify(plane)
+      if (message !== lastMediaPlane) {
+        lastMediaPlane = message
+        postRuntime('media-plane', plane)
       }
       return
     }
+    installBroadcastObjectApi(object as BroadcastObject)
     const rect = object.getBoundingClientRect()
     const style = target.getComputedStyle(object)
     const videoSource = object.querySelector<HTMLParamElement>('param[name="video_src"]')?.value
     const audioSource = object.querySelector<HTMLParamElement>('param[name="audio_src"]')?.value
     const screen = logicalViewport()
-    const plane = {
+    const stackingPath = describeStackingPath(object)
+    const plane: AribMediaPlane = {
+      slotId: slotIdFor(object),
       visible: style.display !== 'none' && style.visibility !== 'hidden' &&
-        rect.width > 0 && rect.height > 0,
+        rect.width > 0 && rect.height > 0 &&
+        stackingPath.every((entry) => entry.display !== 'none' &&
+          entry.visibility !== 'hidden' && entry.opacity > 0),
       x: rect.x,
       y: rect.y,
       width: rect.width,
@@ -455,33 +551,31 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       screenHeight: screen.height,
       videoSource,
       audioSource,
+      layer: {
+        documentOrder: Array.from(target.document.querySelectorAll('*')).indexOf(object),
+        stackingPath,
+      },
     }
     const message = JSON.stringify(plane)
-    if (message === lastVideoPlane) return
-    lastVideoPlane = message
-    postRuntime('video-plane', {
-      ...plane,
-    })
-  }
-  const exposeBroadcastVideo = () => {
-    target.document
-      .querySelectorAll<BroadcastObject>(
-        'object[type="video/x-arib2-broadcast"], ' +
-        'object[data-arib-type="video/x-arib2-broadcast"]',
-      )
-      .forEach((object) => {
-        installBroadcastObjectApi(object)
-        object.style.setProperty('opacity', '0', 'important')
-        object.style.setProperty('pointer-events', 'none', 'important')
-        object.parentElement?.style.setProperty('background', 'transparent', 'important')
-      })
-    reportVideoPlane()
+    if (object !== activeMediaObject) {
+      if (activeMediaObject) unmountMediaPlane()
+      activeMediaObject = object
+      if (mediaPlaneAdapter) {
+        callMediaPlaneAdapter(() => mediaPlaneAdapter.mountMediaPlane(object, plane))
+      }
+    } else if (message !== lastMediaPlane && mediaPlaneAdapter) {
+      callMediaPlaneAdapter(() => mediaPlaneAdapter.updateMediaPlane(object, plane))
+    }
+    setExternalPlaceholder(object, (mediaPlaneAdapter?.renderMode ?? 'external') === 'external')
+    if (message === lastMediaPlane) return
+    lastMediaPlane = message
+    postRuntime('media-plane', plane)
   }
   const startDocumentRuntime = () => {
     installNavigationPolicy()
     reportStageStyle()
     makeTransparent()
-    exposeBroadcastVideo()
+    reportMediaPlane()
   }
 
   // Establish the host session before observing the parser.  A broadcast
@@ -502,16 +596,19 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     event.stopImmediatePropagation()
     reportBlockedNavigation(anchor.href)
   }, true)
-  new MutationObserver(exposeBroadcastVideo).observe(target.document.documentElement, {
+  new MutationObserver(reportMediaPlane).observe(target.document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class', 'style', 'type', 'data-arib-type', 'name', 'value'],
     childList: true,
     subtree: true,
   })
   // Also synchronize once after the installed message even when the document
   // has already been parsed and no mutation follows runtime installation.
-  queueMicrotask(exposeBroadcastVideo)
-  target.setInterval(reportVideoPlane, 100)
+  queueMicrotask(reportMediaPlane)
+  target.setInterval(reportMediaPlane, 100)
 
   target.addEventListener('pagehide', () => {
+    unmountMediaPlane()
     postRuntime('unloading')
   })
 

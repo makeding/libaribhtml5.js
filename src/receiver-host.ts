@@ -4,6 +4,20 @@ import {
   type RuntimeEvent,
   type RuntimeWindow,
 } from './runtime/install'
+import {
+  BehindIframeMediaPlaneAdapter,
+  type AribMediaPlane,
+  type AribMediaPlaneAdapter,
+  type AribMediaPlaneLayer,
+} from './media-plane'
+
+export type {
+  AribMediaPlane,
+  AribMediaPlaneAdapter,
+  AribMediaPlaneLayer,
+  AribMediaPlaneStackEntry,
+  AribVideoPlane,
+} from './media-plane'
 
 export type AribCaptionPacket = {
   componentTag: number
@@ -13,25 +27,17 @@ export type AribCaptionPacket = {
   data?: string
 }
 
-export type AribVideoPlane = {
-  visible: boolean
-  x: number
-  y: number
-  width: number
-  height: number
-  screenWidth: number
-  screenHeight: number
-  videoSource?: string
-  audioSource?: string
-}
-
 export type AribReceiverHostOptions = {
   iframe: HTMLIFrameElement
   viewport: HTMLElement
-  videoSurface: HTMLElement
+  /** Surface used only by the behind-iframe compatibility adapter. */
+  videoSurface?: HTMLElement
+  mediaPlaneAdapter?: AribMediaPlaneAdapter
   onStatus?: (status: string) => void
   onUrlChange?: (url: string) => void
-  onVideoPlane?: (plane: AribVideoPlane) => void
+  onMediaPlane?: (plane: AribMediaPlane) => void
+  /** @deprecated Use onMediaPlane. */
+  onVideoPlane?: (plane: AribMediaPlane) => void
   keepVideoVisible?: boolean
   /** Allow broadcaster applications to use HTTP origins outside this host. */
   allowExternalNetwork?: boolean
@@ -46,14 +52,15 @@ type RuntimeMessage = Record<string, unknown> & {
 export class AribReceiverHost {
   readonly iframe: HTMLIFrameElement
   readonly viewport: HTMLElement
-  readonly videoSurface: HTMLElement
+  readonly videoSurface?: HTMLElement
 
   private readonly ownerWindow: Window
   private readonly origin: string
   private readonly onStatus?: (status: string) => void
   private readonly onUrlChange?: (url: string) => void
-  private readonly onVideoPlane?: (plane: AribVideoPlane) => void
-  private readonly keepVideoVisible: boolean
+  private readonly onMediaPlane?: (plane: AribMediaPlane) => void
+  private readonly onVideoPlane?: (plane: AribMediaPlane) => void
+  private readonly mediaPlaneAdapter?: AribMediaPlaneAdapter
   private readonly allowExternalNetwork: boolean
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
@@ -72,8 +79,14 @@ export class AribReceiverHost {
     this.origin = this.ownerWindow.location.origin
     this.onStatus = options.onStatus
     this.onUrlChange = options.onUrlChange
+    this.onMediaPlane = options.onMediaPlane
     this.onVideoPlane = options.onVideoPlane
-    this.keepVideoVisible = options.keepVideoVisible ?? false
+    this.mediaPlaneAdapter = options.mediaPlaneAdapter ?? (options.videoSurface
+      ? new BehindIframeMediaPlaneAdapter({
+          surface: options.videoSurface,
+          keepVisible: options.keepVideoVisible,
+        })
+      : undefined)
     this.allowExternalNetwork = options.allowExternalNetwork ?? false
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
@@ -84,10 +97,17 @@ export class AribReceiverHost {
   }
 
   installRuntime(target: RuntimeWindow): void {
-    installRuntime(target, { allowExternalNetwork: this.allowExternalNetwork })
+    installRuntime(target, {
+      allowExternalNetwork: this.allowExternalNetwork,
+      mediaPlaneAdapter: this.mediaPlaneAdapter,
+    })
   }
 
+  /** @deprecated Pass an AribMediaPlaneAdapter to the constructor. */
   attachVideo(video: HTMLVideoElement): void {
+    if (!this.videoSurface) {
+      throw new Error('attachVideo() requires the behind-iframe videoSurface fallback')
+    }
     this.video = video
     video.classList.add('broadcast-video')
     if (video.parentElement !== this.videoSurface) this.videoSurface.replaceChildren(video)
@@ -175,7 +195,6 @@ export class AribReceiverHost {
 
     if (message.event === 'installed') {
       this.activeRuntimeId = message.runtimeId
-      this.hideVideoPlane()
       this.onUrlChange?.(String(message.url ?? ''))
       this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
       if (this.programInfo) this.postToRuntime('program-info', { value: this.programInfo })
@@ -200,8 +219,9 @@ export class AribReceiverHost {
         }
         return
       }
+      case 'media-plane':
       case 'video-plane':
-        this.applyVideoPlane(message)
+        this.applyMediaPlane(message)
         return
       case 'destroy':
         this.invalidateRuntime()
@@ -215,10 +235,10 @@ export class AribReceiverHost {
     }
   }
 
-  private applyVideoPlane(message: RuntimeMessage): void {
+  private applyMediaPlane(message: RuntimeMessage): void {
     if (!message.visible) {
-      this.hideVideoPlane()
-      this.onVideoPlane?.({
+      const plane: AribMediaPlane = {
+        slotId: String(message.slotId ?? ''),
         visible: false,
         x: 0,
         y: 0,
@@ -226,10 +246,14 @@ export class AribReceiverHost {
         height: 0,
         screenWidth: this.logicalWidth,
         screenHeight: this.logicalHeight,
-      })
+        layer: this.readMediaLayer(message.layer),
+      }
+      this.onMediaPlane?.(plane)
+      this.onVideoPlane?.(plane)
       return
     }
-    const plane: AribVideoPlane = {
+    const plane: AribMediaPlane = {
+      slotId: String(message.slotId ?? ''),
       visible: true,
       x: Number(message.x) || 0,
       y: Number(message.y) || 0,
@@ -239,22 +263,27 @@ export class AribReceiverHost {
       screenHeight: Number(message.screenHeight) || 2160,
       videoSource: typeof message.videoSource === 'string' ? message.videoSource : undefined,
       audioSource: typeof message.audioSource === 'string' ? message.audioSource : undefined,
+      layer: this.readMediaLayer(message.layer),
     }
     this.logicalWidth = plane.screenWidth
     this.logicalHeight = plane.screenHeight
     this.viewport.style.aspectRatio = `${this.logicalWidth} / ${this.logicalHeight}`
     this.fitBroadcastCanvas()
-    const percent = (value: number, extent: number) => `${value / extent * 100}%`
-    Object.assign(this.videoSurface.style, {
-      display: 'grid',
-      left: percent(plane.x, this.logicalWidth),
-      top: percent(plane.y, this.logicalHeight),
-      width: percent(plane.width, this.logicalWidth),
-      height: percent(plane.height, this.logicalHeight),
-    })
     this.onStatus?.(`映像 ${Math.round(plane.width)}×${Math.round(plane.height)}` +
       ` / 位置 ${Math.round(plane.x)},${Math.round(plane.y)}`)
+    this.onMediaPlane?.(plane)
     this.onVideoPlane?.(plane)
+  }
+
+  private readMediaLayer(value: unknown): AribMediaPlaneLayer {
+    if (!value || typeof value !== 'object') {
+      return { documentOrder: -1, stackingPath: [] }
+    }
+    const layer = value as Partial<AribMediaPlaneLayer>
+    return {
+      documentOrder: Number(layer.documentOrder) || 0,
+      stackingPath: Array.isArray(layer.stackingPath) ? layer.stackingPath : [],
+    }
   }
 
   private postToRuntime(event: string, detail: Record<string, unknown> = {}): void {
@@ -273,13 +302,7 @@ export class AribReceiverHost {
   }
 
   private hideVideoPlane(): void {
-    Object.assign(this.videoSurface.style, {
-      display: this.keepVideoVisible ? 'grid' : 'none',
-      left: '0%',
-      top: '0%',
-      width: '100%',
-      height: '100%',
-    })
+    this.mediaPlaneAdapter?.unmountMediaPlane()
   }
 
   private fitBroadcastCanvas(): void {

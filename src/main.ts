@@ -1,5 +1,6 @@
 import './style.css'
 import { AribReceiverHost } from './receiver-host'
+import { DomObjectMediaPlaneAdapter } from './media-plane'
 import type { RuntimeWindow } from './runtime/install'
 
 declare global {
@@ -24,10 +25,13 @@ const host = new AribReceiverHost({
   iframe,
   viewport,
   videoSurface,
+  mediaPlaneAdapter: new DomObjectMediaPlaneAdapter({
+    media: video,
+    parkingContainer: videoSurface,
+  }),
   onStatus: (value) => { status.textContent = value },
   onUrlChange: (value) => { urlLabel.textContent = value },
 })
-host.attachVideo(video)
 host.setProgramInfo({
   original_network_id: 4,
   transport_stream_id: 11,
