@@ -13,6 +13,47 @@
 caption ページを正しく表示するなら、1 番目または 2 番目が必要です。
 `BehindIframeMediaPlaneAdapter` では実現できません。
 
+## 背景プレーンの制約
+
+BS4K/BS8K の背景は、データ放送ページが任意に選ぶ壁紙ではありません。受信機は
+マルチメディアプレーンより後ろに、画面全体を覆う単色の背景プレーンを持ちます。
+前面のプレーンが透明、または何も描画していない画素だけに、この色が見えます。
+
+MMT の source of truth は LCT です。実装時の優先順位は次の通りです。
+
+1. LCT の `Background_Color_Descriptor` があれば、その RGB 各 8 bit の値を使う。
+2. LCT の色をまだ受け取っていない間は、アプリケーションが報告した stage の単色を互換
+   fallback として使ってよい。ただし、これはアプリケーション CSS を LCT と解釈するものではない。
+3. どちらも得られない間の receiver-owned fallback は黒 (`#000`) とする。
+
+この fallback は規格上の既定色ではありません。白いブラウザ canvas の露出を避けるための
+実装上の選択です。確認に使った NHK BS8K の `8k.mmts` から抽出したファイルも、
+`top/source/top.css` の `body` と `#vstream`、および
+`caption/source/caption.css` の `#backscreen` と `.bs8k #container` に黒を指定しています。
+したがって、このサンプル用に背景画像やグラデーションを追加しません。
+
+背景の実装には、さらに次の制約があります。
+
+- 背景プレーンは viewport 全体を覆い、映像、アプリケーション、字幕、文字スーパーより後ろに置く。
+- LCT の色はアプリケーションやサービスの切り替え時に引き継がない。新しい LCT を受け取るまでは
+  fallback に戻す。
+- アプリケーションの `html` / `body` を透明化して映像を見せる場合でも、透明部分の下には
+  receiver-owned background plane を残す。
+- 放送アプリケーション内の背景画像、要素背景、半透明 UI は multimedia plane の描画であり、
+  LCT の背景色を置き換えない。
+- native compositor でも DOM 実装でも、LCT の単色を iframe 内の装飾要素として実装しない。
+  動画領域の切り抜きや iframe のページ遷移から独立した、受信機所有の最背面レイヤーにする。
+
+根拠は `../ARIB-docs` の次の条項です。
+
+- ARIB STD-B62 1.5版 第一編 第1部 5.2(4): 背景プレーンは最背面で、前面が透明または
+  未描画の部分に指定色を表示する。
+- 同 5.3: MMT 方式の受信機は LCT で指定された色を背景プレーンへ描画して合成する。
+- 同 6.1.1: 背景プレーンは 7680x4320、BT.2020 系の RGB 各 8 bit として定義される。
+- ARIB STD-B60 1.5版 7.3.3.3 および 7.4.3.3: LCT と
+  `Background_Color_Descriptor` (`descriptor_tag=0x8002`) を定義し、24 bit を RGB 各 8 bit
+  の背景色として扱う。
+
 ## ブラウザへ組み込む最小コード
 
 普通の動画表示領域とデータ放送 iframe を同じ viewport に置きます。

@@ -224,7 +224,10 @@ export class AribReceiverHost {
     this.applicationExited = false
     this.iframe.style.removeProperty('display')
     this.invalidateRuntime('document-unload')
-    this.viewport.style.backgroundColor = '#fff'
+    // The transport-owned LCT background is not available to this runtime yet.
+    // Keep uncovered receiver-plane pixels black until an application stage
+    // color is reported instead of flashing the browser canvas white.
+    this.viewport.style.backgroundColor = '#000'
     this.onStatus?.(status)
     this.onUrlChange?.(resolved.pathname)
     this.onLifecycle?.({ type: 'loading', url: resolved.href })

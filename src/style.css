@@ -44,7 +44,7 @@ button { font: inherit; }
   width: 100%;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  background: #fff;
+  background: #000;
   box-shadow: 0 16px 60px #0009;
 }
 
