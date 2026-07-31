@@ -2,21 +2,16 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
-import { prepareBroadcastHtml } from './src/broadcast-document.ts'
+import {
+  createRuntimeBootstrap,
+  prepareBroadcastHtml,
+} from './src/broadcast-document.ts'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const broadcastRoot = path.join(root, 'samples', 'bsp4k')
 const broadcastBasePath = '/data-broadcast/'
 
-const runtimeBootstrap = `
-<script>
-  if (parent && typeof parent.__ARIB_HTML5_INSTALL__ === 'function') {
-    parent.__ARIB_HTML5_INSTALL__(window)
-  } else {
-    console.error('ARIB HTML5 runtime host is not available')
-  }
-</script>
-`
+const runtimeBootstrap = createRuntimeBootstrap(broadcastBasePath)
 
 function broadcastHtmlMiddleware() {
   const install = (server) => {

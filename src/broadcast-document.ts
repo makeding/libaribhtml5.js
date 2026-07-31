@@ -9,6 +9,55 @@ export type BroadcastDocumentOptions = {
   bootstrap?: string
 }
 
+/**
+ * Bootstrap a receiver-managed document before broadcaster deferred scripts run.
+ *
+ * A restored iframe can be parsed before the parent application's module has
+ * installed its host callback.  Keep the receiver identity query usable during
+ * that short window and retry the full installation once the parent is ready.
+ */
+export function createRuntimeBootstrap(scopePath = '/data-broadcast/'): string {
+  const basePath = normalizeBasePath(scopePath)
+  return `<script>
+(function installAribHtml5Runtime(attempt) {
+  var install
+  try {
+    install = parent && parent.__ARIB_HTML5_INSTALL__
+  } catch (error) {
+    install = null
+  }
+  if (typeof install === 'function') {
+    try {
+      install(window)
+      return
+    } catch (error) {
+      console.error('ARIB HTML5 runtime installation failed', error)
+    }
+  }
+  if (!navigator.receiverDevice) {
+    Object.defineProperty(navigator, 'receiverDevice', {
+      configurable: true,
+      enumerable: true,
+      value: {
+        getSystemInformation: function () {
+          return {
+            browsername: 'unknown',
+            browserversion: 'unknown',
+            makerid: 'unknown',
+            modelname: 'unknown',
+            baseurl: new URL(${JSON.stringify(basePath)}, location.origin).href
+          }
+        }
+      }
+    })
+  }
+  if (attempt < 100) {
+    setTimeout(function () { installAribHtml5Runtime(attempt + 1) }, 50)
+  }
+})(0)
+</script>`
+}
+
 function normalizeBasePath(value: string | undefined): string {
   const base = value || '/data-broadcast/'
   return `/${base.replace(/^\/+|\/+$/g, '')}/`

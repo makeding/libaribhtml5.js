@@ -98,7 +98,17 @@ function defineNavigatorProperty(target: Navigator, name: string, value: unknown
 
 export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = {}): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
-  target.__ARIB_HTML5_RUNTIME__ = true
+  target.__ARIB_HTML5_RUNTIME__ = 'installing'
+  try {
+    installRuntimeImplementation(target, options)
+    target.__ARIB_HTML5_RUNTIME__ = true
+  } catch (error) {
+    delete target.__ARIB_HTML5_RUNTIME__
+    throw error
+  }
+}
+
+function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOptions): void {
   installBroadcastClock(target, options.now)
   installRomSoundProtocol(target)
   installAribSymbolFont(target)

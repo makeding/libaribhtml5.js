@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 
 import {
+  createRuntimeBootstrap,
   prepareBroadcastHtml,
   prepareBroadcastStylesheet,
 } from '../src/broadcast-document.ts'
@@ -48,6 +49,7 @@ function createWorker() {
     TextEncoder,
     Uint8Array,
     URL,
+    createRuntimeBootstrap,
     prepareBroadcastHtml,
     prepareBroadcastStylesheet,
     setTimeout,

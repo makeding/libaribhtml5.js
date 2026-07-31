@@ -22,9 +22,16 @@ caption ページを正しく表示するなら、1 番目または 2 番目が�
   <div id="normal-player">
     <video id="video" autoplay muted playsinline></video>
   </div>
-  <iframe id="broadcast" sandbox="allow-scripts allow-same-origin"></iframe>
+  <iframe id="broadcast"></iframe>
 </div>
 ```
+
+この iframe は受信機が管理する同一 origin のコンテンツです。
+`sandbox="allow-scripts allow-same-origin"` は指定しないでください。同一 origin の
+script は sandbox 属性を除去できるため、ブラウザも security boundary にならないと
+警告します。一方で `allow-same-origin` を外すと、host から受信機 API を導入できません。
+受信機が信頼しないアプリケーションには、この in-process runtime ではなく別 origin の
+integration が必要です。
 
 `DomObjectMediaPlaneAdapter` に既存の video と、データ放送を終了した時に video を戻す
 通常プレーヤー container を渡します。

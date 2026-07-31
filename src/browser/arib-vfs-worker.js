@@ -1,4 +1,5 @@
 import {
+  createRuntimeBootstrap,
   prepareBroadcastHtml,
   prepareBroadcastStylesheet,
 } from '../broadcast-document'
@@ -8,7 +9,7 @@ const VFS_PREFIX = scopeUrl.pathname.endsWith('/') ? scopeUrl.pathname : `${scop
 const CACHE_NAME = `libaribhtml5-arib-vfs-v1:${VFS_PREFIX}`
 const CACHE_RESOURCE_PATH = `${VFS_PREFIX}.libaribhtml5-arib-vfs-resource`
 const CACHE_SESSION_PATH = `${VFS_PREFIX}.libaribhtml5-arib-vfs-session`
-const RUNTIME_BOOTSTRAP = '<script>parent.__ARIB_HTML5_INSTALL__?.(window)</script>'
+const RUNTIME_BOOTSTRAP = createRuntimeBootstrap(VFS_PREFIX)
 
 const resources = new Map()
 const waiters = new Map()
