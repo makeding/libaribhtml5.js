@@ -11,6 +11,14 @@ import {
   type AribMediaPlaneLayer,
   type AribMediaPlaneUnmountReason,
 } from './media-plane'
+import {
+  normalizeBroadcastBaseUrl,
+  resolveBroadcastUrl,
+} from './broadcast-url'
+import type {
+  BroadcastResourceChange,
+  BroadcastResourceStore,
+} from './runtime/resources'
 
 export type {
   AribMediaPlane,
@@ -52,6 +60,10 @@ export type AribReceiverHostOptions = {
   keepVideoVisible?: boolean
   /** Allow broadcaster applications to use HTTP origins outside this host. */
   allowExternalNetwork?: boolean
+  /** Same-origin namespace where a Worker or HTTP server exposes carousel data. */
+  broadcastBaseUrl?: string | URL
+  /** Optional bridge to a Service Worker, Cache Storage, or carousel VFS. */
+  resourceStore?: BroadcastResourceStore
 }
 
 type RuntimeMessage = Record<string, unknown> & {
@@ -74,6 +86,8 @@ export class AribReceiverHost {
   private readonly mediaPlaneAdapter?: AribMediaPlaneAdapter
   private readonly runtimeMediaPlaneAdapter?: AribMediaPlaneAdapter
   private readonly allowExternalNetwork: boolean
+  private readonly broadcastBaseUrl: URL
+  private readonly resourceStore?: BroadcastResourceStore
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
   private logicalWidth = 3840
@@ -124,6 +138,14 @@ export class AribReceiverHost {
         }
       : undefined
     this.allowExternalNetwork = options.allowExternalNetwork ?? false
+    this.broadcastBaseUrl = normalizeBroadcastBaseUrl(
+      options.broadcastBaseUrl,
+      this.ownerWindow.location.href,
+    )
+    if (this.broadcastBaseUrl.origin !== this.origin) {
+      throw new Error(`Broadcast base URL must be same-origin: ${this.broadcastBaseUrl.href}`)
+    }
+    this.resourceStore = options.resourceStore
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
@@ -136,6 +158,8 @@ export class AribReceiverHost {
     this.mediaPlaneEnabled = !this.destroyed && !this.applicationExited
     installRuntime(target, {
       allowExternalNetwork: this.allowExternalNetwork,
+      broadcastBaseUrl: this.broadcastBaseUrl.href,
+      resourceStore: this.resourceStore,
       mediaPlaneAdapter: this.runtimeMediaPlaneAdapter,
       now: () => this.getBroadcastTime(),
     })
@@ -153,7 +177,7 @@ export class AribReceiverHost {
 
   loadApplication(url: string, status = 'アプリケーション読込中'): void {
     this.assertAlive()
-    const resolved = new URL(url, this.ownerWindow.location.href)
+    const resolved = resolveBroadcastUrl(url, this.broadcastBaseUrl)
     if (resolved.origin !== this.origin) {
       throw new Error(`External broadcast application URL is not allowed: ${resolved.href}`)
     }
@@ -209,6 +233,11 @@ export class AribReceiverHost {
   resetCaptions(): void {
     this.captionComponentTags = []
     this.postToRuntime('caption-reset')
+  }
+
+  /** Notify a stored carousel resource after the receiver updates or removes it. */
+  notifyDataResource(path: string, change: BroadcastResourceChange): void {
+    this.postToRuntime('resource-change', { path, change })
   }
 
   setProgramInfo(value: ProgramInfo): void {

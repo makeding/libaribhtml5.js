@@ -5,6 +5,7 @@ import { defineConfig } from 'vite'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const broadcastRoot = path.join(root, 'samples', 'bsp4k')
+const broadcastBasePath = '/data-broadcast/'
 
 const runtimeBootstrap = `
 <script>
@@ -29,12 +30,18 @@ function deferStaticRomSoundSources(source) {
 function broadcastHtmlMiddleware() {
   const install = (server) => {
     server.middlewares.use(async (request, response, next) => {
-      const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname)
+      const requestUrl = new URL(request.url ?? '/', 'http://localhost')
+      const pathname = decodeURIComponent(requestUrl.pathname)
+      if (!pathname.startsWith(broadcastBasePath)) return next()
+      const broadcastPathname = `/${pathname.slice(broadcastBasePath.length)}`
       // MH-AIT supplies the entry path; neither it nor later HTML documents
       // are required to use NHK's /sh4 and /sh8 directory convention.
-      if (!/\.html?$/i.test(pathname)) return next()
+      if (!/\.html?$/i.test(broadcastPathname)) {
+        request.url = `${broadcastPathname}${requestUrl.search}`
+        return next()
+      }
 
-      const filename = path.resolve(broadcastRoot, `.${pathname}`)
+      const filename = path.resolve(broadcastRoot, `.${broadcastPathname}`)
       if (!filename.startsWith(`${broadcastRoot}${path.sep}`)) return next()
       try {
         const source = deferStaticRomSoundSources(await fs.readFile(filename, 'utf8'))

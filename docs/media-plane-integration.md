@@ -59,6 +59,7 @@ window.__ARIB_HTML5_INSTALL__ = (child: RuntimeWindow) => {
 
 ```ts
 // データ放送へ入る。video は放送 object の中へ移動する。
+// The receiver path is mounted at /data-broadcast/sh4/... by default.
 host.loadApplication('/sh4/40/001/startup/html/index.html')
 
 // データ放送を終了する。iframe を閉じ、video を通常プレーヤーへ戻して表示する。

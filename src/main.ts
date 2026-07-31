@@ -44,6 +44,8 @@ window.__ARIB_HTML5_INSTALL__ = (target) => host.installRuntime(target)
 window.aribReceiverHost = host
 
 const pages = {
+  // Receiver paths are intentionally kept in their broadcast form here. The
+  // host maps them below /data-broadcast/ before assigning iframe.src.
   startup: '/sh4/40/001/startup/html/index.html',
   top: '/sh4/60/001/top/source/index4k.html',
 } as const

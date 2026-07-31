@@ -5,6 +5,15 @@ import type {
   AribMediaPlaneAdapter,
   AribMediaPlaneStackEntry,
 } from '../media-plane'
+import {
+  normalizeBroadcastBaseUrl,
+  resolveBroadcastUrl,
+} from '../broadcast-url'
+import {
+  createBroadcastResourceCache,
+  type BroadcastResourceCacheListener,
+  type BroadcastResourceStore,
+} from './resources'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
@@ -19,6 +28,10 @@ export type ProgramInfo = Record<string, unknown>
 export type RuntimeOptions = {
   /** Permit HTTP requests outside the receiver-managed application origin. */
   allowExternalNetwork?: boolean
+  /** Same-origin namespace where receiver-managed broadcast resources live. */
+  broadcastBaseUrl?: string | URL
+  /** Optional Worker/cache bridge used by storeDataResource(). */
+  resourceStore?: BroadcastResourceStore
   /** Bind the broadcast object to a browser, native, or compositor media plane. */
   mediaPlaneAdapter?: AribMediaPlaneAdapter
   /** Return current broadcast time as Unix epoch milliseconds. */
@@ -73,6 +86,18 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   target.__ARIB_HTML5_RUNTIME__ = true
   installBroadcastClock(target, options.now)
   installRomSoundProtocol(target)
+
+  const broadcastBaseUrl = normalizeBroadcastBaseUrl(
+    options.broadcastBaseUrl,
+    target.location.href,
+  )
+  if (broadcastBaseUrl.origin !== target.location.origin) {
+    throw new Error(`Broadcast base URL must be same-origin: ${broadcastBaseUrl.href}`)
+  }
+  const resolveRuntimeUrl = (value: unknown) => {
+    const documentRelative = new URL(String(value ?? ''), target.location.href)
+    return resolveBroadcastUrl(documentRelative, broadcastBaseUrl)
+  }
 
   const runtimeId = target.crypto.randomUUID?.() ??
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
@@ -146,19 +171,13 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
 
   const listeners = new Map<string, Set<(event: RuntimeEvent) => void>>()
   const eventIdListeners = new Set<() => void>()
-  type CacheEventListener = (path: string, event: string) => void
-  const cacheListeners = new Map<string, Set<CacheEventListener>>()
-  const storedResources = new Set<string>()
-  const addCacheListener = (path: string, listener: CacheEventListener) => {
-    if (!cacheListeners.has(path)) cacheListeners.set(path, new Set())
-    cacheListeners.get(path)?.add(listener)
-  }
-  const notifyCacheListener = (
-    path: string,
-    listener: CacheEventListener,
-    event = 'store_finished',
-  ) => target.queueMicrotask(() => listener(path, event))
-  const is8k = target.location.pathname.startsWith('/sh8/')
+  type CacheEventListener = BroadcastResourceCacheListener
+  const resourceCache = createBroadcastResourceCache(
+    target,
+    (path) => resolveRuntimeUrl(path),
+    options.resourceStore,
+  )
+  const is8k = target.location.pathname.includes('/sh8/')
   let programInfo: ProgramInfo = {
     original_network_id: 4,
     transport_stream_id: 11,
@@ -230,6 +249,13 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       for (const listener of eventIdListeners) queueMicrotask(listener)
       return
     }
+    if (event.data.event === 'resource-change') {
+      const change = event.data.change
+      if (change === 'updated' || change === 'deleted') {
+        resourceCache.change(String(event.data.path ?? ''), change)
+      }
+      return
+    }
     if (event.data.event === 'stream-event') {
       const value = event.data.value as RuntimeEvent
       const key = listenerKey(value?.source, value?.message_id)
@@ -264,7 +290,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   }
   const isAllowedNavigation = (value: unknown): boolean => {
     try {
-      const url = new URL(String(value), target.location.href)
+      const url = resolveRuntimeUrl(value)
       // Broadcast application paths are signalled by MH-AIT and are not tied
       // to NHK's /sh4 or /sh8 directory convention. The host maps collected
       // broadcast resources into this origin; this is its sandbox policy, not
@@ -299,7 +325,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
         reportBlockedNavigation(url)
         return null
       }
-      target.location.href = url
+      target.location.href = resolveRuntimeUrl(url).href
       return ownerApplication
     },
     destroyApplication: () => {
@@ -316,7 +342,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     browserversion: '0.1.0',
     makerid: 'codex',
     modelname: 'vite-prototype',
-    baseurl: `${target.location.origin}/`,
+    baseurl: broadcastBaseUrl.href,
   }
 
   defineNavigatorProperty(target.navigator, 'receiverDevice', {
@@ -332,32 +358,16 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     },
     cacheEvent: {
       addCacheEventListener: (path: string, listener: CacheEventListener) => {
-        if (typeof listener !== 'function') return false
-        addCacheListener(path, listener)
-        if (storedResources.has(path)) notifyCacheListener(path, listener)
-        return true
+        return resourceCache.addListener(path, listener)
       },
       storeDataResource: (path: string, listener?: CacheEventListener) => {
-        storedResources.add(path)
-        if (typeof listener === 'function') {
-          addCacheListener(path, listener)
-          notifyCacheListener(path, listener)
-        }
-        return true
+        return resourceCache.store(path, listener)
       },
       releaseDataResource: (path?: string) => {
-        if (path === undefined) storedResources.clear()
-        else storedResources.delete(path)
-        return true
+        return resourceCache.release(path)
       },
       removeCacheEventListener: (path: string, listener?: CacheEventListener) => {
-        if (typeof listener === 'function') {
-          cacheListeners.get(path)?.delete(listener)
-          if (cacheListeners.get(path)?.size === 0) cacheListeners.delete(path)
-        } else {
-          cacheListeners.delete(path)
-        }
-        return true
+        return resourceCache.removeListener(path, listener)
       },
     },
     streamEvent: {
@@ -612,6 +622,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   target.setInterval(reportMediaPlane, 100)
 
   target.addEventListener('pagehide', () => {
+    resourceCache.dispose()
     unmountMediaPlane('document-unload')
     postRuntime('unloading')
   })

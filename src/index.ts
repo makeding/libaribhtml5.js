@@ -20,8 +20,19 @@ export type {
 } from './media-plane'
 export { installRuntime } from './runtime/install'
 export type { ProgramInfo, RuntimeEvent, RuntimeOptions, RuntimeWindow } from './runtime/install'
+export type {
+  BroadcastResourceCacheEvent,
+  BroadcastResourceCacheListener,
+  BroadcastResourceChange,
+  BroadcastResourceStore,
+} from './runtime/resources'
 export { installBroadcastClock } from './runtime/clock'
 export type { BroadcastNowProvider } from './runtime/clock'
+export {
+  DEFAULT_BROADCAST_BASE_PATH,
+  normalizeBroadcastBaseUrl,
+  resolveBroadcastUrl,
+} from './broadcast-url'
 export {
   deferRomSoundMarkup,
   installRomSoundProtocol,
