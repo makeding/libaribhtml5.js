@@ -1,6 +1,6 @@
 {
   "name": "libaribhtml5",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browser runtime and receiver host for ARIB HTML5 data broadcasting",
   "keywords": [
     "arib",
