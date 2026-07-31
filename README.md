@@ -47,6 +47,9 @@ Service Worker の `/data-broadcast/` ルーティング、データ放送リソ
 store/update/release ライフサイクル、および ARIB 追加記号フォントは
 [放送リソースとフォント](docs/broadcast-resources-and-fonts.md)を参照してください。
 
+Android/WebView の「放送予定」検索結果から受信機所有の番組表・番組詳細を開く場合は、
+[`onOpenProgramGuide` とブラウザ fallback](docs/android-program-guide.md)を参照してください。
+
 ## English
 
 Browser-hosted ARIB HTML5 receiver-runtime prototype. The initial demo serves the
@@ -84,3 +87,5 @@ See the [common media-plane integration guide](docs/media-plane-integration.md)
 for the shared video layering, geometry, lifecycle, and caption contract.
 See [broadcast resources, Worker routing, and fonts](docs/broadcast-resources-and-fonts.md)
 for the `/data-broadcast/` namespace and cache/font lifecycle.
+See [Android program-guide integration](docs/android-program-guide.md) for handing a
+future-program result to a receiver-owned WebView/native EPG with a browser fallback.

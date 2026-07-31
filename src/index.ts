@@ -51,3 +51,10 @@ export type {
   BroadcastVfsResource,
   ServiceWorkerBroadcastVfsOptions,
 } from './service-worker-vfs'
+export type {
+  AribProgramGuideHandler,
+  AribProgramGuideRequest,
+  AribProgramGuideUnavailableEvent,
+  AribProgramGuideUnavailableHandler,
+  AribProgramGuideUnavailableReason,
+} from './program-guide'

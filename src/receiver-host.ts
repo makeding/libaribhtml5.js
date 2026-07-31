@@ -19,6 +19,13 @@ import type {
   BroadcastResourceChange,
   BroadcastResourceStore,
 } from './runtime/resources'
+import {
+  dispatchProgramGuideRequest,
+  type AribProgramGuideHandler,
+  type AribProgramGuideRequest,
+  type AribProgramGuideUnavailableEvent,
+  type AribProgramGuideUnavailableHandler,
+} from './program-guide'
 
 export type {
   AribMediaPlane,
@@ -64,6 +71,10 @@ export type AribReceiverHostOptions = {
   broadcastBaseUrl?: string | URL
   /** Optional bridge to a Service Worker, Cache Storage, or carousel VFS. */
   resourceStore?: BroadcastResourceStore
+  /** Receiver/WebView bridge which opens the native EPG or a program detail page. */
+  onOpenProgramGuide?: AribProgramGuideHandler
+  /** Override the default browser alert when the receiver cannot open the EPG. */
+  onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
 }
 
 type RuntimeMessage = Record<string, unknown> & {
@@ -88,6 +99,8 @@ export class AribReceiverHost {
   private readonly allowExternalNetwork: boolean
   private readonly broadcastBaseUrl: URL
   private readonly resourceStore?: BroadcastResourceStore
+  private readonly onOpenProgramGuide?: AribProgramGuideHandler
+  private readonly onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
   private logicalWidth = 3840
@@ -146,6 +159,8 @@ export class AribReceiverHost {
       throw new Error(`Broadcast base URL must be same-origin: ${this.broadcastBaseUrl.href}`)
     }
     this.resourceStore = options.resourceStore
+    this.onOpenProgramGuide = options.onOpenProgramGuide
+    this.onProgramGuideUnavailable = options.onProgramGuideUnavailable
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
@@ -245,6 +260,21 @@ export class AribReceiverHost {
     this.postToRuntime('program-info', { value: this.programInfo })
   }
 
+  /**
+   * Ask the receiver host to open its EPG. A WebView host can bridge this to a
+   * native activity; an ordinary browser receives a clear unsupported notice.
+   */
+  openProgramGuide(request: AribProgramGuideRequest = {
+    destination: 'program-guide',
+  }): Promise<boolean> {
+    this.assertAlive()
+    return dispatchProgramGuideRequest(
+      request,
+      this.onOpenProgramGuide,
+      this.reportProgramGuideUnavailable,
+    )
+  }
+
   /** Set a free-running broadcast clock from an absolute Unix time. */
   setBroadcastTime(value: number | Date): void {
     this.setBroadcastClock({
@@ -316,6 +346,20 @@ export class AribReceiverHost {
     }
     this.invalidateRuntime('document-unload')
     this.onStatus?.('通信ページをブロックしました')
+  }
+
+  private readonly reportProgramGuideUnavailable = (
+    event: AribProgramGuideUnavailableEvent,
+  ): void => {
+    const message = event.request.destination === 'program-detail'
+      ? 'このプレーヤーでは放送予定の番組詳細を表示できません。'
+      : 'このプレーヤーでは番組表を表示できません。'
+    this.onStatus?.(message)
+    if (this.onProgramGuideUnavailable) {
+      this.onProgramGuideUnavailable(event)
+      return
+    }
+    this.ownerWindow.alert?.(message)
   }
 
   private readonly handleRuntimeMessage = (event: MessageEvent): void => {
