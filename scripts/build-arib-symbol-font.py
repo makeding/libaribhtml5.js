@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the ARIB television-symbol SVG and WOFF font subset."""
+"""Build the ARIB television-symbol SVG and WOFF font subsets."""
 
 import argparse
 from pathlib import Path
@@ -12,7 +12,13 @@ from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "src" / "runtime" / "fonts"
-CODEPOINTS = tuple(range(0x1F19B, 0x1F1AD))
+TELEVISION_CODEPOINTS = tuple(range(0x1F19B, 0x1F1AD))
+ENCLOSED_CJK_CODEPOINTS = (
+    *range(0x1F200, 0x1F203),
+    *range(0x1F210, 0x1F23C),
+    *range(0x1F240, 0x1F249),
+    *range(0x1F250, 0x1F252),
+)
 
 
 def arguments():
@@ -20,14 +26,20 @@ def arguments():
     parser.add_argument(
         "source_font",
         type=Path,
+        nargs="?",
         help="OFL font containing U+1F19B through U+1F1AC",
+    )
+    parser.add_argument(
+        "--cjk-source",
+        type=Path,
+        help="OFL font or TTC containing the enclosed CJK symbols (JP face 0)",
     )
     return parser.parse_args()
 
 
-def validate_source(font: TTFont):
+def validate_source(font: TTFont, codepoints: tuple[int, ...]):
     cmap = font.getBestCmap() or {}
-    missing = [f"U+{codepoint:04X}" for codepoint in CODEPOINTS if codepoint not in cmap]
+    missing = [f"U+{codepoint:04X}" for codepoint in codepoints if codepoint not in cmap]
     if missing:
         raise SystemExit(f"source font is missing: {', '.join(missing)}")
     license_records = [
@@ -39,14 +51,19 @@ def validate_source(font: TTFont):
         raise SystemExit("source font does not declare the SIL Open Font License")
 
 
-def build_svg(font: TTFont):
+def build_svg(
+    font: TTFont,
+    codepoints: tuple[int, ...],
+    filename: str,
+    family: str,
+):
     cmap = font.getBestCmap()
     glyph_set = font.getGlyphSet()
     units_per_em = font["head"].unitsPerEm
     ascent = font["hhea"].ascent
     descent = font["hhea"].descent
     glyphs = []
-    for codepoint in CODEPOINTS:
+    for codepoint in codepoints:
         glyph_name = cmap[codepoint]
         glyph = glyph_set[glyph_name]
         pen = SVGPathPen(glyph_set)
@@ -60,8 +77,8 @@ def build_svg(font: TTFont):
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<svg xmlns="http://www.w3.org/2000/svg">',
         '  <defs>',
-        f'    <font id="AribSymbols" horiz-adv-x="{units_per_em}">',
-        f'      <font-face font-family="ARIB Symbols" units-per-em="{units_per_em}" '
+        f'    <font id="{family.replace(" ", "")}" horiz-adv-x="{units_per_em}">',
+        f'      <font-face font-family="{family}" units-per-em="{units_per_em}" '
         f'ascent="{ascent}" descent="{descent}" />',
         f'      <missing-glyph horiz-adv-x="{units_per_em}" />',
         *glyphs,
@@ -70,29 +87,41 @@ def build_svg(font: TTFont):
         '</svg>',
         '',
     ])
-    (OUTPUT / "arib-symbols.svg").write_text(document, encoding="utf-8")
+    (OUTPUT / filename).write_text(document, encoding="utf-8")
 
 
-def build_woff(source_font: Path):
-    font = TTFont(source_font)
+def build_woff(font: TTFont, codepoints: tuple[int, ...], filename: str):
     options = subset.Options()
     options.name_IDs = ["*"]
     options.name_languages = ["*"]
     options.recalc_bounds = True
     subsetter = subset.Subsetter(options=options)
-    subsetter.populate(unicodes=CODEPOINTS)
+    subsetter.populate(unicodes=codepoints)
     subsetter.subset(font)
     font.flavor = "woff"
-    font.save(OUTPUT / "arib-symbols.woff", reorderTables=False)
+    font.save(OUTPUT / filename, reorderTables=False)
 
 
 def main():
     args = arguments()
-    font = TTFont(args.source_font)
-    validate_source(font)
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    build_svg(font)
-    build_woff(args.source_font)
+    if args.source_font:
+        font = TTFont(args.source_font)
+        validate_source(font, TELEVISION_CODEPOINTS)
+        build_svg(font, TELEVISION_CODEPOINTS, "arib-symbols.svg", "ARIB Symbols")
+        build_woff(font, TELEVISION_CODEPOINTS, "arib-symbols.woff")
+    if args.cjk_source:
+        cjk_font = TTFont(args.cjk_source, fontNumber=0)
+        validate_source(cjk_font, ENCLOSED_CJK_CODEPOINTS)
+        build_svg(
+            cjk_font,
+            ENCLOSED_CJK_CODEPOINTS,
+            "arib-enclosed-cjk.svg",
+            "ARIB Enclosed CJK",
+        )
+        build_woff(cjk_font, ENCLOSED_CJK_CODEPOINTS, "arib-enclosed-cjk.woff")
+    if not args.source_font and not args.cjk_source:
+        raise SystemExit("provide source_font and/or --cjk-source")
 
 
 if __name__ == "__main__":

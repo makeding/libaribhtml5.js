@@ -124,20 +124,24 @@ and therefore follow the Worker route. A font explicitly retained through
 
 `src/runtime/fonts/arib-symbols.svg` is the auditable SVG Font source for the
 television-symbol block `U+1F19B..U+1F1AC`, including `U+1F19E SQUARED FOUR K`
-(`🆞`). They are a minimal subset of the OFL-licensed Noto Sans Symbols font
-used by the reference receiver. See `src/runtime/fonts/NOTICE.md` and
-`src/runtime/fonts/OFL.txt`; no commercial font outline is included.
+(`🆞`). `arib-enclosed-cjk.svg` covers the defined enclosed CJK television
+symbols in `U+1F200..U+1F251`, including `🈑` and `🈔`. They are minimal
+subsets of the OFL-licensed Noto Sans Symbols and Noto Sans CJK JP fonts. See
+`src/runtime/fonts/NOTICE.md` and `src/runtime/fonts/OFL.txt`; no commercial
+font outline is included.
 
 Modern browsers no longer reliably render SVG Fonts, so the same script emits
-`arib-symbols.woff` for runtime use. The runtime registers the sparse font only
-for its 18 code points under `ARIB Symbols` and the ARIB generic family names
-`丸ゴシック`, `太丸ゴシック`, and `角ゴシック`. Ordinary Japanese glyphs continue
-through the page's next fallback font. Dynamic DRCS and broadcaster-delivered
-SVG/WOFF fonts stay separate from this static receiver font.
+the corresponding WOFF files for runtime use. The runtime registers the sparse
+fonts only for those code points under `ARIB Symbols` and the ARIB generic
+family names `丸ゴシック`, `太丸ゴシック`, and `角ゴシック`. Ordinary Japanese
+glyphs continue through the page's next fallback font. Dynamic DRCS and
+broadcaster-delivered SVG/WOFF fonts stay separate from these static receiver
+fonts.
 
 Regenerate both assets with:
 
 ```sh
 nix-shell -p python313Packages.fonttools --run \
-  'python scripts/build-arib-symbol-font.py /path/to/NotoSansSymbols.ttf'
+  'python scripts/build-arib-symbol-font.py /path/to/NotoSansSymbols.ttf \
+    --cjk-source /path/to/NotoSansCJK-VF.otf.ttc'
 ```
