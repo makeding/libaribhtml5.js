@@ -28,6 +28,7 @@ export type {
 } from './runtime/resources'
 export { installBroadcastClock } from './runtime/clock'
 export type { BroadcastNowProvider } from './runtime/clock'
+export { installAribSymbolFont } from './runtime/fonts'
 export {
   DEFAULT_BROADCAST_BASE_PATH,
   normalizeBroadcastBaseUrl,

@@ -1,4 +1,5 @@
 import { installRomSoundProtocol } from './romsound'
+import { installAribSymbolFont } from './fonts'
 import { installBroadcastClock, type BroadcastNowProvider } from './clock'
 import type {
   AribMediaPlane,
@@ -86,6 +87,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   target.__ARIB_HTML5_RUNTIME__ = true
   installBroadcastClock(target, options.now)
   installRomSoundProtocol(target)
+  installAribSymbolFont(target)
 
   const broadcastBaseUrl = normalizeBroadcastBaseUrl(
     options.broadcastBaseUrl,

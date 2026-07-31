@@ -43,6 +43,10 @@ pnpm build:sdk
 `host.setBroadcastClock()` へ渡します。変換例は
 [録画再生時の放送時計](docs/broadcast-clock.md)を参照してください。
 
+Service Worker の `/data-broadcast/` ルーティング、データ放送リソースの
+store/update/release ライフサイクル、および ARIB 追加記号フォントは
+[放送リソースとフォント](docs/broadcast-resources-and-fonts.md)を参照してください。
+
 ## English
 
 Browser-hosted ARIB HTML5 receiver-runtime prototype. The initial demo serves the
@@ -78,3 +82,5 @@ of them as data URLs in the single JavaScript bundle.
 
 See the [common media-plane integration guide](docs/media-plane-integration.md)
 for the shared video layering, geometry, lifecycle, and caption contract.
+See [broadcast resources, Worker routing, and fonts](docs/broadcast-resources-and-fonts.md)
+for the `/data-broadcast/` namespace and cache/font lifecycle.
