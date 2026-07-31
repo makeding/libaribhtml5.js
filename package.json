@@ -1,6 +1,16 @@
 {
   "name": "libaribhtml5",
   "version": "0.1.0",
+  "description": "Browser runtime and receiver host for ARIB HTML5 data broadcasting",
+  "keywords": [
+    "arib",
+    "html5",
+    "data-broadcasting",
+    "bml",
+    "isdb",
+    "broadcast"
+  ],
+  "license": "MIT",
   "author": {
     "name": "huggy",
     "url": "https://huggy.moe",
@@ -10,12 +20,48 @@
     "modelName": "Huggy ARIB HTML5 Receiver"
   },
   "type": "module",
+  "main": "./dist/sdk/libaribhtml5.mjs",
+  "module": "./dist/sdk/libaribhtml5.mjs",
+  "types": "./dist/types/index.d.ts",
+  "unpkg": "./dist/sdk/libaribhtml5.js",
+  "jsdelivr": "./dist/sdk/libaribhtml5.js",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/sdk/libaribhtml5.mjs",
+      "default": "./dist/sdk/libaribhtml5.mjs"
+    },
+    "./iife": "./dist/sdk/libaribhtml5.js",
+    "./arib-vfs-sw.js": "./dist/sdk/arib-vfs-sw.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/sdk",
+    "dist/types",
+    "docs",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/makeding/libaribhtml5.git"
+  },
+  "bugs": {
+    "url": "https://github.com/makeding/libaribhtml5/issues"
+  },
+  "homepage": "https://github.com/makeding/libaribhtml5#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "test": "node --experimental-strip-types scripts/test-runtime-contracts.mjs && node --experimental-strip-types scripts/test-vfs-worker.mjs",
     "build": "tsc --noEmit && vite build && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs",
-    "build:sdk": "tsc --noEmit && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs",
-    "preview": "vite preview --host 127.0.0.1"
+    "build:sdk": "tsc --noEmit && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs && npm run build:types",
+    "build:types": "tsc -p tsconfig.build.json && node scripts/rewrite-declaration-imports.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "prepack": "npm run build:sdk"
   },
   "devDependencies": {
     "typescript": "^5.8.0",

@@ -11,8 +11,8 @@ export default defineConfig({
     lib: {
       entry: path.join(root, 'src', 'index.ts'),
       name: 'ARIBHTML5',
-      formats: ['iife'],
-      fileName: () => 'libaribhtml5.js',
+      formats: ['es', 'iife'],
+      fileName: format => format === 'es' ? 'libaribhtml5.mjs' : 'libaribhtml5.js',
     },
     outDir: 'dist/sdk',
   },

@@ -25,6 +25,19 @@ Vite が出力した URL を開いてください。放送による自動起動�
 
 ### SDK バンドル
 
+npm から利用する場合は、パッケージをインストールして ESM エントリを import します。
+
+```sh
+npm install libaribhtml5
+```
+
+```ts
+import { AribReceiverHost, installRuntime } from 'libaribhtml5'
+```
+
+従来の `<script>` 向け IIFE は `libaribhtml5/iife`、Service Worker ファイルは
+`libaribhtml5/arib-vfs-sw.js` として公開されます。
+
 ```sh
 pnpm build:sdk
 ```
@@ -77,6 +90,19 @@ application and **表示ページ** to inspect the visible page directly.
   `0721 0721 0721 0724 9674`.
 
 ### SDK bundle
+
+Install the package to use its typed ESM entry point:
+
+```sh
+npm install libaribhtml5
+```
+
+```ts
+import { AribReceiverHost, installRuntime } from 'libaribhtml5'
+```
+
+The browser-global IIFE remains available as `libaribhtml5/iife`, and the
+Service Worker is exported as `libaribhtml5/arib-vfs-sw.js`.
 
 ```sh
 pnpm build:sdk
