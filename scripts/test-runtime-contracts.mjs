@@ -5,6 +5,10 @@ import {
   resolveBroadcastUrl,
 } from '../src/broadcast-url.ts'
 import { createBroadcastResourceCache } from '../src/runtime/resources.ts'
+import {
+  prepareBroadcastHtml,
+  prepareBroadcastStylesheet,
+} from '../src/broadcast-document.ts'
 
 const origin = 'https://receiver.example/player/index.html'
 const base = normalizeBroadcastBaseUrl(undefined, origin)
@@ -16,6 +20,21 @@ assert.equal(
 assert.equal(
   resolveBroadcastUrl('/data-broadcast/sh4/index.html', base).pathname,
   '/data-broadcast/sh4/index.html',
+)
+
+const preparedHtml = prepareBroadcastHtml(
+  '<html><head><title>x</title></head><body>' +
+  '<object type="video/x-arib2-broadcast" data=""></object>' +
+  '<audio src="romsound://9"></audio><script src="/sh4/app.js"></script></body></html>',
+  { bootstrap: '<script>install()</script>' },
+)
+assert.match(preparedHtml, /<head><script>install\(\)<\/script>/)
+assert.match(preparedHtml, /data-arib-type="video\/x-arib2-broadcast"/)
+assert.match(preparedHtml, /data-arib-romsound="romsound:\/\/9"/)
+assert.match(preparedHtml, /src="\/data-broadcast\/sh4\/app\.js"/)
+assert.equal(
+  prepareBroadcastStylesheet('a{background:url("/sh4/a.png")} @import "/40/base.css";'),
+  'a{background:url("/data-broadcast/sh4/a.png")} @import "/data-broadcast/40/base.css";',
 )
 
 const pending = []

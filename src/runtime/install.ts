@@ -290,16 +290,16 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       url,
     })
   }
-  const isAllowedNavigation = (value: unknown): boolean => {
+  const allowedNavigationUrl = (value: unknown): URL | null => {
     try {
       const url = resolveRuntimeUrl(value)
       // Broadcast application paths are signalled by MH-AIT and are not tied
       // to NHK's /sh4 or /sh8 directory convention. The host maps collected
       // broadcast resources into this origin; this is its sandbox policy, not
       // an implementation of the MH-AIT application-boundary descriptor.
-      return url.origin === target.location.origin && /^https?:$/.test(url.protocol)
+      return url.origin === target.location.origin && /^https?:$/.test(url.protocol) ? url : null
     } catch {
-      return false
+      return null
     }
   }
   const installNavigationPolicy = () => {
@@ -307,11 +307,12 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     if (!nhksh || typeof nhksh.lu !== 'function' || nhksh.__navigationGuarded) return
     const navigate = nhksh.lu as (url: string, ...args: unknown[]) => unknown
     nhksh.lu = (url: string, ...args: unknown[]) => {
-      if (!isAllowedNavigation(url)) {
+      const resolved = allowedNavigationUrl(url)
+      if (!resolved) {
         reportBlockedNavigation(url)
         return false
       }
-      return navigate.call(nhksh, url, ...args)
+      return navigate.call(nhksh, resolved.href, ...args)
     }
     nhksh.__navigationGuarded = true
   }
@@ -323,11 +324,12 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     activateInput: () => true,
     deactivateInput: () => true,
     createApplication: (url: string) => {
-      if (!isAllowedNavigation(url)) {
+      const resolved = allowedNavigationUrl(url)
+      if (!resolved) {
         reportBlockedNavigation(url)
         return null
       }
-      target.location.href = resolveRuntimeUrl(url).href
+      target.location.href = resolved.href
       return ownerApplication
     },
     destroyApplication: () => {
@@ -450,6 +452,37 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   let nextMediaObjectId = 1
   let activeMediaObject: HTMLElement | null = null
   let lastMediaPlane = ''
+  let observedMediaObject: HTMLElement | null = null
+  let mediaPlaneFrame: number | null = null
+  let reportMediaPlane = () => undefined
+  const activeMediaAnimation = (): boolean => {
+    const mediaObject = activeMediaObject
+    if (!mediaObject || typeof target.document.getAnimations !== 'function') return false
+    return target.document.getAnimations().some(animation => {
+      if (animation.playState !== 'running') return false
+      const animated = (animation.effect as KeyframeEffect | null)?.target
+      return animated instanceof target.Element && (
+        animated === mediaObject || animated.contains(mediaObject) || mediaObject.contains(animated)
+      )
+    })
+  }
+  const scheduleMediaPlaneReport = () => {
+    if (mediaPlaneFrame !== null) return
+    mediaPlaneFrame = target.requestAnimationFrame(() => {
+      mediaPlaneFrame = null
+      reportMediaPlane()
+      if (activeMediaAnimation()) scheduleMediaPlaneReport()
+    })
+  }
+  const mediaPlaneResizeObserver = typeof target.ResizeObserver === 'function'
+    ? new target.ResizeObserver(scheduleMediaPlaneReport)
+    : null
+  const observeMediaObject = (object: HTMLElement | null) => {
+    if (object === observedMediaObject) return
+    if (observedMediaObject) mediaPlaneResizeObserver?.unobserve(observedMediaObject)
+    observedMediaObject = object
+    if (object) mediaPlaneResizeObserver?.observe(object)
+  }
   const logicalViewport = () => {
     const content = target.document.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content ?? ''
     const width = Number(content.match(/(?:^|,)\s*width\s*=\s*(\d+)/i)?.[1] ?? 3840)
@@ -519,12 +552,13 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     }
     activeMediaObject = null
   }
-  const reportMediaPlane = () => {
+  reportMediaPlane = () => {
     const object = target.document.querySelector<HTMLElement>(
       'object[type="video/x-arib2-broadcast"], ' +
       'object[data-arib-type="video/x-arib2-broadcast"]',
     )
     if (!object) {
+      observeMediaObject(null)
       const removedSlotId = activeMediaObject ? slotIdFor(activeMediaObject) : ''
       if (activeMediaObject) unmountMediaPlane('slot-removed')
       const screen = logicalViewport()
@@ -546,6 +580,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       }
       return
     }
+    observeMediaObject(object)
     installBroadcastObjectApi(object as BroadcastObject)
     const rect = object.getBoundingClientRect()
     const style = target.getComputedStyle(object)
@@ -607,23 +642,37 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   target.document.addEventListener('click', (event) => {
     const element = event.target instanceof target.Element ? event.target : null
     const anchor = element?.closest<HTMLAnchorElement>('a[href]')
-    if (!anchor || isAllowedNavigation(anchor.href)) return
+    if (!anchor) return
+    const resolved = allowedNavigationUrl(anchor.href)
+    if (resolved && resolved.href === anchor.href) return
     event.preventDefault()
     event.stopImmediatePropagation()
-    reportBlockedNavigation(anchor.href)
+    if (resolved) target.location.href = resolved.href
+    else reportBlockedNavigation(anchor.href)
   }, true)
-  new MutationObserver(reportMediaPlane).observe(target.document.documentElement, {
+  const mediaPlaneMutationObserver = new target.MutationObserver(scheduleMediaPlaneReport)
+  mediaPlaneMutationObserver.observe(target.document.documentElement, {
     attributes: true,
     attributeFilter: ['class', 'style', 'type', 'data-arib-type', 'name', 'value'],
     childList: true,
     subtree: true,
   })
+  mediaPlaneResizeObserver?.observe(target.document.documentElement)
+  target.addEventListener('resize', scheduleMediaPlaneReport)
+  for (const event of ['animationstart', 'animationend', 'animationcancel',
+    'transitionrun', 'transitionend', 'transitioncancel']) {
+    target.document.addEventListener(event, scheduleMediaPlaneReport, true)
+  }
   // Also synchronize once after the installed message even when the document
   // has already been parsed and no mutation follows runtime installation.
-  queueMicrotask(reportMediaPlane)
-  target.setInterval(reportMediaPlane, 100)
+  queueMicrotask(scheduleMediaPlaneReport)
 
   target.addEventListener('pagehide', () => {
+    if (mediaPlaneFrame !== null) target.cancelAnimationFrame(mediaPlaneFrame)
+    mediaPlaneFrame = null
+    mediaPlaneMutationObserver.disconnect()
+    mediaPlaneResizeObserver?.disconnect()
+    target.removeEventListener('resize', scheduleMediaPlaneReport)
     resourceCache.dispose()
     unmountMediaPlane('document-unload')
     postRuntime('unloading')

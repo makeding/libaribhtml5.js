@@ -39,3 +39,15 @@ export {
   installRomSoundProtocol,
   resolveRomSoundUrl,
 } from './runtime/romsound'
+export {
+  prefixBroadcastRootAttributes,
+  prepareBroadcastHtml,
+  prepareBroadcastStylesheet,
+  rewriteBroadcastObjectMarkup,
+} from './broadcast-document'
+export type { BroadcastDocumentOptions } from './broadcast-document'
+export { ServiceWorkerBroadcastVfs } from './service-worker-vfs'
+export type {
+  BroadcastVfsResource,
+  ServiceWorkerBroadcastVfsOptions,
+} from './service-worker-vfs'

@@ -12,6 +12,9 @@ import sound10 from './romsound/10.mp3'
 import sound11 from './romsound/11.mp3'
 import sound12 from './romsound/12.mp3'
 import sound13 from './romsound/13.mp3'
+import { deferRomSoundMarkup } from './romsound-markup'
+
+export { deferRomSoundMarkup } from './romsound-markup'
 
 const romsoundData = [
   sound0, sound1, sound2, sound3, sound4, sound5, sound6,
@@ -31,20 +34,6 @@ export function resolveRomSoundUrl(value: unknown): string | null {
   const id = romSoundId(value)
   const data = id === null ? null : romsoundData[id]
   return data ?? null
-}
-
-/**
- * Keep custom-scheme media out of the HTML parser. The parser starts media
- * selection before MutationObserver callbacks run, so post-insertion repair is
- * too late to prevent CSP errors. The deferred attribute is resolved by the
- * runtime as soon as the node is observed or played.
- */
-export function deferRomSoundMarkup(source: string): string {
-  return source.replace(
-    /\s+src\s*=\s*(?:(["'])(romsound:\/\/\d+)\1|(romsound:\/\/\d+)(?=[\s/>]))/gi,
-    (_match, _quote: string | undefined, quoted: string | undefined, bare: string | undefined) =>
-      ` data-arib-romsound="${quoted ?? bare}"`,
-  )
 }
 
 export function installRomSoundProtocol(target: RuntimeWindow): void {

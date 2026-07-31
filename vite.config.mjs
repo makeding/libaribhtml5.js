@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
+import { prepareBroadcastHtml } from './src/broadcast-document.ts'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const broadcastRoot = path.join(root, 'samples', 'bsp4k')
@@ -16,16 +17,6 @@ const runtimeBootstrap = `
   }
 </script>
 `
-
-function deferStaticRomSoundSources(source) {
-  return source.replace(/<(?:audio|video|source)\b[^>]*>/gi, (tag) =>
-    tag.replace(
-      /\bsrc\s*=\s*(?:"(romsound:\/\/\d+)"|'(romsound:\/\/\d+)'|(romsound:\/\/\d+))/gi,
-      (_attribute, doubleQuoted, singleQuoted, unquoted) =>
-        `data-arib-romsound="${doubleQuoted ?? singleQuoted ?? unquoted}"`,
-    ),
-  )
-}
 
 function broadcastHtmlMiddleware() {
   const install = (server) => {
@@ -44,10 +35,10 @@ function broadcastHtmlMiddleware() {
       const filename = path.resolve(broadcastRoot, `.${broadcastPathname}`)
       if (!filename.startsWith(`${broadcastRoot}${path.sep}`)) return next()
       try {
-        const source = deferStaticRomSoundSources(await fs.readFile(filename, 'utf8'))
-        const html = /<head(?:\s[^>]*)?>/i.test(source)
-          ? source.replace(/<head(\s[^>]*)?>/i, (head) => `${head}${runtimeBootstrap}`)
-          : `${runtimeBootstrap}${source}`
+        const html = prepareBroadcastHtml(await fs.readFile(filename, 'utf8'), {
+          basePath: broadcastBasePath,
+          bootstrap: runtimeBootstrap,
+        })
         response.statusCode = 200
         response.setHeader('Content-Type', 'text/html; charset=utf-8')
         response.setHeader('Cache-Control', 'no-store')
