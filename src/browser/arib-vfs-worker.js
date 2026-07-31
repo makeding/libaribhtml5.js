@@ -139,6 +139,11 @@ function contentType(path, supplied) {
   ]).get(extension) || 'application/octet-stream'
 }
 
+function broadcastRootPath(path) {
+  const separator = path.indexOf('/')
+  return separator <= 0 ? VFS_PREFIX : `${VFS_PREFIX}${path.slice(0, separator)}/`
+}
+
 function wake(path, resource) {
   const exact = waiters.get(path)
   if (exact) {
@@ -192,13 +197,13 @@ async function serve(request) {
   let body = resource.data.slice(0)
   if (/^text\/html(?:;|$)/i.test(type)) {
     const source = prepareBroadcastHtml(new TextDecoder().decode(resource.data), {
-      basePath: VFS_PREFIX,
+      basePath: broadcastRootPath(resolved.path),
       bootstrap: RUNTIME_BOOTSTRAP,
     })
     body = new TextEncoder().encode(source)
   } else if (/^text\/css(?:;|$)/i.test(type)) {
     const source = prepareBroadcastStylesheet(new TextDecoder().decode(resource.data), {
-      basePath: VFS_PREFIX,
+      basePath: broadcastRootPath(resolved.path),
     })
     body = new TextEncoder().encode(source)
   }

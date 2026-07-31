@@ -1,9 +1,11 @@
 import {
   installRuntime,
-  type ProgramInfo,
   type RuntimeEvent,
   type RuntimeWindow,
 } from './runtime/install'
+import { cloneProgramInfo, type ProgramInfo } from './program-info'
+import type { ReceiverSystemInformationOverrides } from './runtime/system-information'
+import type { ReceiverDeviceIdentifierProvider } from './device-identifier'
 import {
   BehindIframeMediaPlaneAdapter,
   type AribMediaPlane,
@@ -53,6 +55,15 @@ export type AribBroadcastClock = {
   currentMediaTimeSeconds?: () => number
 }
 
+export type AribReceiverLifecycleEvent =
+  | { type: 'loading'; url: string }
+  | { type: 'installed'; url: string; runtimeId: string }
+  | { type: 'navigating'; url: string }
+  | { type: 'exited' }
+  | { type: 'navigation-blocked'; url: string }
+  | { type: 'frame-blocked'; url: string }
+  | { type: 'error'; message: string }
+
 export type AribReceiverHostOptions = {
   iframe: HTMLIFrameElement
   viewport: HTMLElement
@@ -60,6 +71,8 @@ export type AribReceiverHostOptions = {
   videoSurface?: HTMLElement
   mediaPlaneAdapter?: AribMediaPlaneAdapter
   onStatus?: (status: string) => void
+  /** Machine-readable application/runtime lifecycle; never branch on onStatus text. */
+  onLifecycle?: (event: AribReceiverLifecycleEvent) => void
   onUrlChange?: (url: string) => void
   onMediaPlane?: (plane: AribMediaPlane) => void
   /** @deprecated Use onMediaPlane. */
@@ -75,6 +88,10 @@ export type AribReceiverHostOptions = {
   onOpenProgramGuide?: AribProgramGuideHandler
   /** Override the default browser alert when the receiver cannot open the EPG. */
   onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
+  /** Receiver identity/capabilities exposed to the broadcast application. */
+  systemInformation?: ReceiverSystemInformationOverrides
+  /** Resolve receiver/CAS identifiers; defaults to the bundled Huggy demo identity. */
+  getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
 }
 
 type RuntimeMessage = Record<string, unknown> & {
@@ -91,6 +108,7 @@ export class AribReceiverHost {
   private readonly ownerWindow: Window
   private readonly origin: string
   private readonly onStatus?: (status: string) => void
+  private readonly onLifecycle?: (event: AribReceiverLifecycleEvent) => void
   private readonly onUrlChange?: (url: string) => void
   private readonly onMediaPlane?: (plane: AribMediaPlane) => void
   private readonly onVideoPlane?: (plane: AribMediaPlane) => void
@@ -101,6 +119,8 @@ export class AribReceiverHost {
   private readonly resourceStore?: BroadcastResourceStore
   private readonly onOpenProgramGuide?: AribProgramGuideHandler
   private readonly onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
+  private readonly systemInformation?: ReceiverSystemInformationOverrides
+  private readonly getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
   private logicalWidth = 3840
@@ -120,6 +140,7 @@ export class AribReceiverHost {
     this.ownerWindow = this.iframe.ownerDocument.defaultView ?? window
     this.origin = this.ownerWindow.location.origin
     this.onStatus = options.onStatus
+    this.onLifecycle = options.onLifecycle
     this.onUrlChange = options.onUrlChange
     this.onMediaPlane = options.onMediaPlane
     this.onVideoPlane = options.onVideoPlane
@@ -161,6 +182,8 @@ export class AribReceiverHost {
     this.resourceStore = options.resourceStore
     this.onOpenProgramGuide = options.onOpenProgramGuide
     this.onProgramGuideUnavailable = options.onProgramGuideUnavailable
+    this.systemInformation = options.systemInformation
+    this.getDeviceIdentifier = options.getDeviceIdentifier
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
@@ -177,6 +200,8 @@ export class AribReceiverHost {
       resourceStore: this.resourceStore,
       mediaPlaneAdapter: this.runtimeMediaPlaneAdapter,
       now: () => this.getBroadcastTime(),
+      systemInformation: this.systemInformation,
+      getDeviceIdentifier: this.getDeviceIdentifier,
     })
   }
 
@@ -202,6 +227,7 @@ export class AribReceiverHost {
     this.viewport.style.backgroundColor = '#fff'
     this.onStatus?.(status)
     this.onUrlChange?.(resolved.pathname)
+    this.onLifecycle?.({ type: 'loading', url: resolved.href })
     resolved.searchParams.set('runtime', Date.now().toString())
     this.iframe.src = resolved.href
   }
@@ -216,6 +242,7 @@ export class AribReceiverHost {
     this.iframe.src = 'about:blank'
     this.onUrlChange?.('')
     this.onStatus?.(status)
+    this.onLifecycle?.({ type: 'exited' })
   }
 
   dispatchKey(code: number): void {
@@ -256,8 +283,14 @@ export class AribReceiverHost {
   }
 
   setProgramInfo(value: ProgramInfo): void {
-    this.programInfo = { ...value }
+    this.programInfo = cloneProgramInfo(value)
     this.postToRuntime('program-info', { value: this.programInfo })
+  }
+
+  /** Clear stale EIT state while changing services or broadcast sessions. */
+  clearProgramInfo(): void {
+    this.programInfo = null
+    this.postToRuntime('program-info', { value: null })
   }
 
   /**
@@ -346,6 +379,7 @@ export class AribReceiverHost {
     }
     this.invalidateRuntime('document-unload')
     this.onStatus?.('通信ページをブロックしました')
+    this.onLifecycle?.({ type: 'frame-blocked', url: this.iframe.src })
   }
 
   private readonly reportProgramGuideUnavailable = (
@@ -373,6 +407,11 @@ export class AribReceiverHost {
       this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
       if (this.programInfo) this.postToRuntime('program-info', { value: this.programInfo })
       this.onStatus?.('ランタイム導入済み')
+      this.onLifecycle?.({
+        type: 'installed',
+        url: String(message.url ?? ''),
+        runtimeId: message.runtimeId,
+      })
       return
     }
     if (message.runtimeId !== this.activeRuntimeId) return
@@ -381,10 +420,15 @@ export class AribReceiverHost {
       case 'unloading':
         this.invalidateRuntime('document-unload')
         this.onStatus?.('ページ遷移中')
+        this.onLifecycle?.({ type: 'navigating', url: String(message.url ?? '') })
         return
       case 'navigation-blocked':
         this.onStatus?.('外部URLをブロックしました')
         this.onUrlChange?.(String(message.url ?? ''))
+        this.onLifecycle?.({
+          type: 'navigation-blocked',
+          url: String(message.url ?? ''),
+        })
         return
       case 'stage-style': {
         const color = String(message.backgroundColor ?? '')
@@ -402,6 +446,7 @@ export class AribReceiverHost {
         return
       case 'error':
         this.onStatus?.(`ランタイムエラー：${String(message.message ?? '')}`)
+        this.onLifecycle?.({ type: 'error', message: String(message.message ?? '') })
         return
       default:
         this.onStatus?.(`ランタイム：${String(message.event ?? '')}`)

@@ -29,8 +29,9 @@ Vite が出力した URL を開いてください。放送による自動起動�
 pnpm build:sdk
 ```
 
-このコマンドは `dist/sdk/libaribhtml5.js` を生成し、`AribReceiverHost` と
-`installRuntime` を持つ `window.ARIBHTML5` を公開します。受信機内蔵音は
+このコマンドは `dist/sdk/libaribhtml5.js` と、ブラウザ VFS 用の
+`dist/sdk/arib-vfs-sw.js` を生成します。SDK は `AribReceiverHost`、
+`ServiceWorkerBroadcastVfs`、`installRuntime` を持つ `window.ARIBHTML5` を公開します。受信機内蔵音は
 `src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、SDK のビルド時に
 すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。
 
@@ -42,6 +43,9 @@ pnpm build:sdk
 録画再生ではシステム時計ではなく、ストリームの NTP と再生位置を
 `host.setBroadcastClock()` へ渡します。変換例は
 [録画再生時の放送時計](docs/broadcast-clock.md)を参照してください。
+
+EIT 由来の番組情報と受信機固有情報を host から渡す契約は
+[receiver host contracts](docs/receiver-host-contracts.md)を参照してください。
 
 Service Worker の `/data-broadcast/` ルーティング、データ放送リソースの
 store/update/release ライフサイクル、および ARIB 追加記号フォントは
@@ -78,8 +82,9 @@ application and **表示ページ** to inspect the visible page directly.
 pnpm build:sdk
 ```
 
-This produces `dist/sdk/libaribhtml5.js` and exposes `window.ARIBHTML5` with
-`AribReceiverHost` and `installRuntime`. Receiver built-in sounds are maintained
+This produces `dist/sdk/libaribhtml5.js` plus `dist/sdk/arib-vfs-sw.js` for the
+optional browser VFS, and exposes `window.ARIBHTML5` with `AribReceiverHost`,
+`ServiceWorkerBroadcastVfs`, and `installRuntime`. Receiver built-in sounds are maintained
 as individual MP3 files under `src/runtime/romsound/`; the SDK build inlines all
 of them as data URLs in the single JavaScript bundle.
 
@@ -89,3 +94,5 @@ See [broadcast resources, Worker routing, and fonts](docs/broadcast-resources-an
 for the `/data-broadcast/` namespace and cache/font lifecycle.
 See [Android program-guide integration](docs/android-program-guide.md) for handing a
 future-program result to a receiver-owned WebView/native EPG with a browser fallback.
+See [receiver host contracts](docs/receiver-host-contracts.md) for program metadata
+and receiver-owned system information.

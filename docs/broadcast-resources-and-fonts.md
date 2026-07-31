@@ -15,9 +15,11 @@ host.loadApplication('/sh4/40/001/startup/html/index.html')
 // iframe: /data-broadcast/sh4/40/001/startup/html/index.html
 ```
 
-The base must be same-origin and end-user code may change it. The runtime also
-reports this value as `receiverDevice.getSystemInformation().baseurl`, so
-broadcaster libraries construct carousel URLs inside the same namespace.
+The base must be same-origin and end-user code may change it. The runtime
+derives the active mount from the current document and reports that as
+`receiverDevice.getSystemInformation().baseurl`; for the example above it is
+`/data-broadcast/sh4/`. Broadcaster libraries therefore construct root paths
+inside the selected carousel mount.
 
 A production server or Service Worker should route only this prefix to its
 carousel/VFS and remove the prefix before looking up the broadcast path:
@@ -30,6 +32,53 @@ carousel/VFS and remove the prefix before looking up the broadcast path:
 Keeping the prefix makes Worker scope and receiver-owned HTTP resources
 explicit. `subt://` caption resources and `romsound://` receiver sounds are not
 HTTP URLs and must not be rewritten into this namespace.
+
+## Optional browser VFS
+
+The SDK build emits `arib-vfs-sw.js` and exports a matching client. The demuxer
+or carousel owner feeds complete resources; application/context selection stays
+outside the receiver runtime:
+
+```ts
+const backend = new ServiceWorkerBroadcastVfs({
+  workerUrl: '/receiver/arib-vfs-sw.js',
+  baseUrl: '/data-broadcast/',
+})
+const vfs = new BroadcastVfsSession(backend)
+
+await vfs.beginSession()
+const revision = vfs.enqueue({ path, contentType, data })
+await vfs.waitFor(revision)
+await vfs.ensure(entry)
+host.loadApplication(entry)
+```
+
+`enqueue()` copies a callback-lifetime `Uint8Array` synchronously. Writes are
+ordered in the background and its returned revision is an application launch
+barrier. `ensure()` probes the Worker and, if its memory was reclaimed, begins
+a fresh Worker session and replays the page-owned resource mirror. Demuxer
+context selection and the `contextId -> revision` mapping stay in the player.
+
+`ServiceWorkerBroadcastVfs.begin()`, `put()`, and `canRead()` remain available
+as low-level backend operations for hosts which already own these guarantees.
+
+The server which hosts the Worker script must permit the chosen scope. When the
+script itself is outside `/data-broadcast/`, return this response header:
+
+```http
+Service-Worker-Allowed: /data-broadcast/
+```
+
+The main player page may intentionally live outside the Worker scope. VFS
+mutations and probes therefore use direct messages to the scoped active Worker;
+only the data-broadcast iframe's HTTP requests are intercepted. Cache Storage
+preserves the active resource session if the browser reclaims or replaces the
+Worker.
+
+HTML and CSS preparation is shared by the development middleware and Worker.
+`prepareBroadcastHtml()` handles the receiver object marker, ROM-sound deferral,
+root-relative URL mapping, and runtime bootstrap. `prepareBroadcastStylesheet()`
+maps root-relative CSS resources into the same namespace.
 
 ## Stored-resource lifecycle
 

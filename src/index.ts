@@ -2,6 +2,7 @@ export { AribReceiverHost } from './receiver-host'
 export type {
   AribCaptionPacket,
   AribBroadcastClock,
+  AribReceiverLifecycleEvent,
   AribReceiverHostOptions,
 } from './receiver-host'
 export {
@@ -19,7 +20,23 @@ export type {
   DomObjectMediaPlaneAdapterOptions,
 } from './media-plane'
 export { installRuntime } from './runtime/install'
-export type { ProgramInfo, RuntimeEvent, RuntimeOptions, RuntimeWindow } from './runtime/install'
+export {
+  createReceiverSystemInformation,
+  RECEIVER_SYSTEM_IDENTITY,
+} from './runtime/system-information'
+export type {
+  ReceiverSystemIdentity,
+  ReceiverSystemInformation,
+  ReceiverSystemInformationOverrides,
+} from './runtime/system-information'
+export { cloneProgramInfo } from './program-info'
+export type { ProgramInfo } from './program-info'
+export type { RuntimeEvent, RuntimeOptions, RuntimeWindow } from './runtime/install'
+export {
+  DEFAULT_RECEIVER_DEVICE_IDENTIFIER,
+  resolveReceiverDeviceIdentifier,
+} from './device-identifier'
+export type { ReceiverDeviceIdentifierProvider } from './device-identifier'
 export type {
   BroadcastResourceCacheEvent,
   BroadcastResourceCacheListener,
@@ -31,6 +48,7 @@ export type { BroadcastNowProvider } from './runtime/clock'
 export { installAribSymbolFont } from './runtime/fonts'
 export {
   DEFAULT_BROADCAST_BASE_PATH,
+  deriveBroadcastRootUrl,
   normalizeBroadcastBaseUrl,
   resolveBroadcastUrl,
 } from './broadcast-url'
@@ -46,9 +64,11 @@ export {
   rewriteBroadcastObjectMarkup,
 } from './broadcast-document'
 export type { BroadcastDocumentOptions } from './broadcast-document'
-export { ServiceWorkerBroadcastVfs } from './service-worker-vfs'
+export { BroadcastVfsSession, ServiceWorkerBroadcastVfs } from './service-worker-vfs'
 export type {
+  BroadcastVfsBackend,
   BroadcastVfsResource,
+  BroadcastVfsSessionOptions,
   ServiceWorkerBroadcastVfsOptions,
 } from './service-worker-vfs'
 export type {

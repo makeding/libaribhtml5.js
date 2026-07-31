@@ -1,11 +1,18 @@
 {
   "name": "libaribhtml5",
   "version": "0.1.0",
-  "private": true,
+  "author": {
+    "name": "huggy",
+    "url": "https://huggy.moe",
+    "email": "libaribhtml5@huggy.moe"
+  },
+  "aribReceiver": {
+    "modelName": "Huggy ARIB HTML5 Receiver"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --experimental-strip-types scripts/test-runtime-contracts.mjs",
+    "test": "node --experimental-strip-types scripts/test-runtime-contracts.mjs && node --experimental-strip-types scripts/test-vfs-worker.mjs",
     "build": "tsc --noEmit && vite build && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs",
     "build:sdk": "tsc --noEmit && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs",
     "preview": "vite preview --host 127.0.0.1"

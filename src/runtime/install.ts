@@ -7,6 +7,7 @@ import type {
   AribMediaPlaneStackEntry,
 } from '../media-plane'
 import {
+  deriveBroadcastRootUrl,
   normalizeBroadcastBaseUrl,
   resolveBroadcastUrl,
 } from '../broadcast-url'
@@ -15,6 +16,17 @@ import {
   type BroadcastResourceCacheListener,
   type BroadcastResourceStore,
 } from './resources'
+import {
+  createReceiverSystemInformation,
+  type ReceiverSystemInformationOverrides,
+} from './system-information'
+import { cloneProgramInfo, type ProgramInfo } from '../program-info'
+import {
+  resolveReceiverDeviceIdentifier,
+  type ReceiverDeviceIdentifierProvider,
+} from '../device-identifier'
+
+export type { ProgramInfo } from '../program-info'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
@@ -23,8 +35,6 @@ export type RuntimeEvent = {
   message_id: number
   private_data_byte: string
 }
-
-export type ProgramInfo = Record<string, unknown>
 
 export type RuntimeOptions = {
   /** Permit HTTP requests outside the receiver-managed application origin. */
@@ -37,6 +47,10 @@ export type RuntimeOptions = {
   mediaPlaneAdapter?: AribMediaPlaneAdapter
   /** Return current broadcast time as Unix epoch milliseconds. */
   now?: BroadcastNowProvider
+  /** Receiver identity/capabilities exposed by receiverDevice.getSystemInformation(). */
+  systemInformation?: ReceiverSystemInformationOverrides
+  /** Resolve receiver/CAS identifiers by receiverDevice identifier kind. */
+  getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
 }
 
 type CaptionListener = (data: string) => void
@@ -96,9 +110,10 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   if (broadcastBaseUrl.origin !== target.location.origin) {
     throw new Error(`Broadcast base URL must be same-origin: ${broadcastBaseUrl.href}`)
   }
+  const broadcastRootUrl = deriveBroadcastRootUrl(target.location.href, broadcastBaseUrl)
   const resolveRuntimeUrl = (value: unknown) => {
     const documentRelative = new URL(String(value ?? ''), target.location.href)
-    return resolveBroadcastUrl(documentRelative, broadcastBaseUrl)
+    return resolveBroadcastUrl(documentRelative, broadcastBaseUrl, broadcastRootUrl)
   }
 
   const runtimeId = target.crypto.randomUUID?.() ??
@@ -179,14 +194,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     (path) => resolveRuntimeUrl(path),
     options.resourceStore,
   )
-  const is8k = target.location.pathname.includes('/sh8/')
-  let programInfo: ProgramInfo = {
-    original_network_id: 4,
-    transport_stream_id: 11,
-    service_id: is8k ? 102 : 101,
-    event_id: 1,
-    event_name: is8k ? 'BS8Kデモ' : 'BS4Kデモ',
-  }
+  let programInfo: ProgramInfo | null = null
   const listenerKey = (source: { event_message_tag?: number }, id?: number) =>
     `${source?.event_message_tag ?? 0}:${id ?? 0}`
 
@@ -247,7 +255,14 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
       return
     }
     if (event.data.event === 'program-info') {
-      programInfo = { ...(event.data.value as ProgramInfo ?? {}) }
+      try {
+        programInfo = event.data.value === null
+          ? null
+          : cloneProgramInfo(event.data.value as ProgramInfo)
+      } catch (error) {
+        postRuntime('error', { message: `Invalid program information: ${String(error)}` })
+        return
+      }
       for (const listener of eventIdListeners) queueMicrotask(listener)
       return
     }
@@ -341,24 +356,25 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     getOwnerApplication: () => ownerApplication,
   })
 
-  const systemInformation = {
-    browsername: 'libaribhtml5',
-    browserversion: '0.1.0',
-    makerid: 'codex',
-    modelname: 'vite-prototype',
-    baseurl: broadcastBaseUrl.href,
-  }
+  const systemInformation = createReceiverSystemInformation(
+    broadcastRootUrl.href,
+    options.systemInformation,
+  )
 
   defineNavigatorProperty(target.navigator, 'receiverDevice', {
     getSystemInformation: () => ({ ...systemInformation }),
-    getDeviceIdentifier: (_kind: number, callback: (value: string) => void) => {
-      // nhksh.getCAS10() converts this 48-bit receiver identifier to the
-      // decimal ACAS number and appends its five-digit XOR check value.
-      // This produces: 0721 0721 0721 0724 9674.
-      queueMicrotask(() => callback('4194c4ae4730'))
+    getDeviceIdentifier: (kind: number, callback: (value: string) => void) => {
+      // The default 48-bit value preserves the demo's existing ACAS display:
+      // 0721 0721 0721 0724 9674. Product hosts can resolve each kind.
+      queueMicrotask(() => {
+        void resolveReceiverDeviceIdentifier(kind, options.getDeviceIdentifier).then(
+          callback,
+          () => callback(''),
+        )
+      })
     },
-    getCurrentEventInformation: (callback: (value: unknown) => void) => {
-      queueMicrotask(() => callback({ ...programInfo }))
+    getCurrentEventInformation: (callback: (value: ProgramInfo | null) => void) => {
+      queueMicrotask(() => callback(programInfo ? cloneProgramInfo(programInfo) : null))
     },
     cacheEvent: {
       addCacheEventListener: (path: string, listener: CacheEventListener) => {
@@ -675,7 +691,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
     target.removeEventListener('resize', scheduleMediaPlaneReport)
     resourceCache.dispose()
     unmountMediaPlane('document-unload')
-    postRuntime('unloading')
+    postRuntime('unloading', { url: target.location.href })
   })
 
   target.addEventListener('error', (event) => {

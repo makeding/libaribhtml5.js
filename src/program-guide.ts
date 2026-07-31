@@ -1,4 +1,4 @@
-import type { ProgramInfo } from './runtime/install'
+import { cloneProgramInfo, type ProgramInfo } from './program-info.ts'
 
 export type AribProgramGuideRequest = {
   /**
@@ -31,7 +31,7 @@ export type AribProgramGuideUnavailableHandler = (
 function copyRequest(request: AribProgramGuideRequest): AribProgramGuideRequest {
   return {
     ...request,
-    program: request.program ? { ...request.program } : undefined,
+    program: request.program ? cloneProgramInfo(request.program) : undefined,
   }
 }
 
