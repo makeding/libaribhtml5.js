@@ -1,8 +1,10 @@
 import { deferRomSoundMarkup } from './runtime/romsound-markup.ts'
 
 export type BroadcastDocumentOptions = {
-  /** Receiver-owned same-origin URL namespace, for example /data-broadcast/. */
+  /** Current carousel mount, for example /data-broadcast/sh4/. */
   basePath?: string
+  /** Worker/server scope containing the mount, for example /data-broadcast/. */
+  scopePath?: string
   /** Inline bootstrap inserted at the start of head, including its script tag. */
   bootstrap?: string
 }
@@ -26,15 +28,32 @@ export function rewriteBroadcastObjectMarkup(source: string): string {
   })
 }
 
-export function prefixBroadcastRootAttributes(source: string, basePath?: string): string {
+function receiverPath(path: string, base: string, scope: string): string {
+  if (path.startsWith(scope)) return path
+  const mount = base.startsWith(scope)
+    ? base.slice(scope.length).replace(/^\/+|\/+$/g, '')
+    : ''
+  const requested = path.replace(/^\/+/, '')
+  if (mount && (requested === mount || requested.startsWith(`${mount}/`))) {
+    return `${scope}${requested}`
+  }
+  return `${base}${requested}`
+}
+
+export function prefixBroadcastRootAttributes(
+  source: string,
+  basePath?: string,
+  scopePath?: string,
+): string {
   const base = normalizeBasePath(basePath)
+  const scope = normalizeBasePath(scopePath ?? basePath)
   return source.replace(
     /(\b(?:href|src|action|poster)\s*=\s*)(?:(['"])(\/[^/][^"']*)\2|(\/[^\s>]*))/gi,
     (match, name: string, quote: string | undefined, quotedPath: string | undefined,
       barePath: string | undefined) => {
       const path = quotedPath ?? barePath
       if (!path || path.startsWith(base)) return match
-      const value = `${base}${path.slice(1)}`
+      const value = receiverPath(path, base, scope)
       return quote ? `${name}${quote}${value}${quote}` : `${name}${value}`
     },
   )
@@ -45,18 +64,19 @@ export function prepareBroadcastStylesheet(
   options: BroadcastDocumentOptions = {},
 ): string {
   const base = normalizeBasePath(options.basePath)
+  const scope = normalizeBasePath(options.scopePath ?? options.basePath)
   return source
     .replace(
       /url\(\s*(["']?)(\/[^/)][^)]*)\1\s*\)/gi,
       (match, quote: string, path: string) => path.startsWith(base)
         ? match
-        : `url(${quote}${base}${path.slice(1)}${quote})`,
+        : `url(${quote}${receiverPath(path, base, scope)}${quote})`,
     )
     .replace(
       /(@import\s+)(["'])(\/[^/][^"']*)\2/gi,
       (match, keyword: string, quote: string, path: string) => path.startsWith(base)
         ? match
-        : `${keyword}${quote}${base}${path.slice(1)}${quote}`,
+        : `${keyword}${quote}${receiverPath(path, base, scope)}${quote}`,
     )
 }
 
@@ -67,6 +87,7 @@ export function prepareBroadcastHtml(
   const prepared = prefixBroadcastRootAttributes(
     deferRomSoundMarkup(rewriteBroadcastObjectMarkup(source)),
     options.basePath,
+    options.scopePath,
   )
   if (!options.bootstrap) return prepared
   const head = /<head(?:\s[^>]*)?>/i.exec(prepared)

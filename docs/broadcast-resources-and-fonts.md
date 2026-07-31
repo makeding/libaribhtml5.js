@@ -16,10 +16,10 @@ host.loadApplication('/sh4/40/001/startup/html/index.html')
 ```
 
 The base must be same-origin and end-user code may change it. The runtime
-derives the active mount from the current document and reports that as
-`receiverDevice.getSystemInformation().baseurl`; for the example above it is
-`/data-broadcast/sh4/`. Broadcaster libraries therefore construct root paths
-inside the selected carousel mount.
+reports this stable scope as `receiverDevice.getSystemInformation().baseurl`.
+Broadcaster startup libraries may append a selected mount such as `sh4`
+themselves. Separately, HTML/CSS/runtime URL mapping derives the active mount
+from the current document when resolving root-relative paths such as `/60/...`.
 
 A production server or Service Worker should route only this prefix to its
 carousel/VFS and remove the prefix before looking up the broadcast path:

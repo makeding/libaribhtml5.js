@@ -357,7 +357,7 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
   })
 
   const systemInformation = createReceiverSystemInformation(
-    broadcastRootUrl.href,
+    broadcastBaseUrl.href,
     options.systemInformation,
   )
 

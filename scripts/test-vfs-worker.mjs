@@ -92,7 +92,7 @@ assert.equal((await message(first, {
 })).ok, true)
 const html = new TextEncoder().encode(
   '<html><head></head><body><object type="video/x-arib2-broadcast"></object>' +
-  '<script src="/60/app.js"></script></body></html>',
+  '<script src="/60/app.js"></script><script src="/sh4/61/app.js"></script></body></html>',
 )
 assert.equal((await message(first, {
   type: 'arib-vfs-put',
@@ -113,6 +113,7 @@ const prepared = await response.text()
 assert.match(prepared, /__ARIB_HTML5_INSTALL__/)
 assert.match(prepared, /data-arib-type="video\/x-arib2-broadcast"/)
 assert.match(prepared, /src="\/data-broadcast\/sh4\/60\/app\.js"/)
+assert.match(prepared, /src="\/data-broadcast\/sh4\/61\/app\.js"/)
 const head = await request(first, 'sh4/index.html', 'HEAD')
 assert.equal(head.status, 200)
 assert.equal(await head.text(), '')

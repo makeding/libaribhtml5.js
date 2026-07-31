@@ -47,9 +47,11 @@ const host = new AribReceiverHost({
 })
 ```
 
-`baseurl` is generated from the current document mount. For example, a document
-under `/data-broadcast/bsfuji4k/...` exposes
-`/data-broadcast/bsfuji4k/`. An injected `baseurl` cannot override that value.
+`baseurl` is the stable receiver VFS scope, normally `/data-broadcast/`.
+Broadcaster startup libraries may append their selected carousel mount (for
+example `sh4`) themselves. The current document mount is used only when mapping
+root-relative resources such as `/60/...`; it is not included in `baseurl`.
+An injected `baseurl` cannot override the actual VFS scope.
 
 ## Device identifiers
 

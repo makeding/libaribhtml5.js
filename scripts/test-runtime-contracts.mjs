@@ -72,6 +72,10 @@ assert.equal(
   '/data-broadcast/bsfuji4k/60/002/caption/source/index.html',
 )
 assert.equal(
+  resolveBroadcastUrl('/bsfuji4k/60/001/top/index.html', base, root).pathname,
+  '/data-broadcast/bsfuji4k/60/001/top/index.html',
+)
+assert.equal(
   resolveBroadcastUrl('/sh4/60/001/index.html?x=1#top', base).href,
   'https://receiver.example/data-broadcast/sh4/60/001/index.html?x=1#top',
 )

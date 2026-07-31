@@ -198,12 +198,14 @@ async function serve(request) {
   if (/^text\/html(?:;|$)/i.test(type)) {
     const source = prepareBroadcastHtml(new TextDecoder().decode(resource.data), {
       basePath: broadcastRootPath(resolved.path),
+      scopePath: VFS_PREFIX,
       bootstrap: RUNTIME_BOOTSTRAP,
     })
     body = new TextEncoder().encode(source)
   } else if (/^text\/css(?:;|$)/i.test(type)) {
     const source = prepareBroadcastStylesheet(new TextDecoder().decode(resource.data), {
       basePath: broadcastRootPath(resolved.path),
+      scopePath: VFS_PREFIX,
     })
     body = new TextEncoder().encode(source)
   }

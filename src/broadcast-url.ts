@@ -45,7 +45,14 @@ export function resolveBroadcastUrl(
   const resolved = new URL(value, base)
   if (resolved.origin !== base.origin || !/^https?:$/.test(resolved.protocol)) return resolved
   if (!resolved.pathname.startsWith(base.pathname)) {
-    resolved.pathname = `${broadcastRoot.pathname}${resolved.pathname.replace(/^\/+/, '')}`
+    const requestedPath = resolved.pathname.replace(/^\/+/, '')
+    const mountPath = broadcastRoot.pathname.startsWith(base.pathname)
+      ? broadcastRoot.pathname.slice(base.pathname.length).replace(/^\/+|\/+$/g, '')
+      : ''
+    const alreadyMounted = mountPath && (
+      requestedPath === mountPath || requestedPath.startsWith(`${mountPath}/`)
+    )
+    resolved.pathname = `${alreadyMounted ? base.pathname : broadcastRoot.pathname}${requestedPath}`
   }
   return resolved
 }
