@@ -46,7 +46,8 @@ pnpm build:sdk
 `dist/sdk/arib-vfs-sw.js` を生成します。SDK は `AribReceiverHost`、
 `ServiceWorkerBroadcastVfs`、`installRuntime` を持つ `window.ARIBHTML5` を公開します。受信機内蔵音は
 `src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、SDK のビルド時に
-すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。
+すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。iOS/iPadOS では短い内蔵音が
+主動画の media session を奪わないよう、`romsound://` の再生を成功扱いの no-op にします。
 
 プレーヤーへ統合する際のメディアスロット、adapter、レイヤー、ライフサイクル、字幕の契約は
 [メディアプレーン共通統合ガイド](docs/media-plane-integration.md)を参照してください。
@@ -117,7 +118,9 @@ This produces `dist/sdk/libaribhtml5.js` plus `dist/sdk/arib-vfs-sw.js` for the
 optional browser VFS, and exposes `window.ARIBHTML5` with `AribReceiverHost`,
 `ServiceWorkerBroadcastVfs`, and `installRuntime`. Receiver built-in sounds are maintained
 as individual MP3 files under `src/runtime/romsound/`; the SDK build inlines all
-of them as data URLs in the single JavaScript bundle.
+of them as data URLs in the single JavaScript bundle. On iOS and iPadOS,
+`romsound://` playback is a successful no-op so a short receiver sound cannot
+replace the main video's active media session.
 
 See the [common media-plane integration guide](docs/media-plane-integration.md)
 for the shared video layering, geometry, lifecycle, and caption contract.

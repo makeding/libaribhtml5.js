@@ -30,6 +30,7 @@ import { runtimeEventMatchesSelector } from '../src/runtime/stream-event.ts'
 import { resolveBroadcastMediaSlot } from '../src/runtime/media-slot.ts'
 import { BehindIframeMediaPlaneAdapter } from '../src/media-plane.ts'
 import { makeIframePointerTransparent } from '../src/iframe-input.ts'
+import { shouldSuppressRomSoundPlayback } from '../src/runtime/platform.ts'
 
 const mediaRect = (left, top, width, height) => ({
   x: left,
@@ -112,6 +113,21 @@ const receiverIframe = {
 makeIframePointerTransparent(receiverIframe)
 assert.equal(receiverIframe.style.pointerEvents, 'none')
 assert.equal(receiverIframe.tabIndex, -1)
+assert.equal(shouldSuppressRomSoundPlayback({
+  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)',
+  platform: 'iPhone',
+  maxTouchPoints: 5,
+}), true)
+assert.equal(shouldSuppressRomSoundPlayback({
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+  platform: 'MacIntel',
+  maxTouchPoints: 5,
+}), true)
+assert.equal(shouldSuppressRomSoundPlayback({
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+  platform: 'MacIntel',
+  maxTouchPoints: 0,
+}), false)
 
 const origin = 'https://receiver.example/player/index.html'
 assert.deepEqual(RECEIVER_SYSTEM_IDENTITY, {

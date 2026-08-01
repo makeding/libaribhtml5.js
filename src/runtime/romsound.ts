@@ -13,6 +13,7 @@ import sound11 from './romsound/11.mp3'
 import sound12 from './romsound/12.mp3'
 import sound13 from './romsound/13.mp3'
 import { deferRomSoundMarkup } from './romsound-markup'
+import { shouldSuppressRomSoundPlayback } from './platform'
 
 export { deferRomSoundMarkup } from './romsound-markup'
 
@@ -43,6 +44,7 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
   const mediaPrototype = target.HTMLMediaElement?.prototype
   const elementPrototype = target.Element?.prototype
   if (!mediaPrototype || !elementPrototype) return
+  const suppressPlayback = shouldSuppressRomSoundPlayback(target.navigator)
 
   const resolve = (value: unknown) => resolveRomSoundUrl(value) ?? String(value)
   const isMediaSource = (element: unknown): element is HTMLMediaElement | HTMLSourceElement =>
@@ -63,6 +65,13 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
     return resolved ?? configured
   }
 
+  const suppressSource = (element: Element, value: unknown): boolean => {
+    if (!suppressPlayback || !resolveRomSoundUrl(value)) return false
+    rememberSource(element, value)
+    removeAttribute.call(element, 'src')
+    return true
+  }
+
   // Preserve the receiver-visible custom URL even though the browser-facing
   // attribute contains a data URL. This keeps libraries such as jQuery from
   // creating a new <audio> element on every playRomSound() call.
@@ -75,6 +84,9 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
   }
 
   elementPrototype.setAttribute = function(name: string, value: string): void {
+    if (name.toLowerCase() === 'src' && isMediaSource(this) && suppressSource(this, value)) {
+      return
+    }
     const nextValue = name.toLowerCase() === 'src' && isMediaSource(this)
       ? rememberSource(this, value)
       : String(value)
@@ -87,6 +99,9 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
     qualifiedName: string,
     value: string,
   ): void {
+    if (qualifiedName.toLowerCase() === 'src' && isMediaSource(this) && suppressSource(this, value)) {
+      return
+    }
     const nextValue = qualifiedName.toLowerCase() === 'src' && isMediaSource(this)
       ? rememberSource(this, value)
       : String(value)
@@ -111,6 +126,7 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
         return isMediaSource(this) ? getMarker(this) ?? descriptor.get!.call(this) : descriptor.get!.call(this)
       },
       set(value: string) {
+        if (isMediaSource(this) && suppressSource(this, value)) return
         descriptor.set!.call(this, isMediaSource(this) ? rememberSource(this, value) : resolve(value))
       },
     })
@@ -122,7 +138,13 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
 
   const play = mediaPrototype.play
   mediaPrototype.play = function(): Promise<void> {
-    const resolved = resolveRomSoundUrl(getMarker(this) ?? getAttribute.call(this, 'src'))
+    const directSource = getMarker(this) ?? getAttribute.call(this, 'src')
+    const resolved = resolveRomSoundUrl(directSource)
+    if (suppressPlayback) {
+      const childSource = this.querySelector?.(`source[${markerName}]`)
+      const childResolved = childSource ? resolveRomSoundUrl(getMarker(childSource)) : null
+      if (resolved || childResolved) return Promise.resolve()
+    }
     if (resolved) mediaSource?.set?.call(this, resolved)
     return play.call(this)
   }
@@ -195,6 +217,14 @@ export function installRomSoundProtocol(target: RuntimeWindow): void {
       const configured = deferred ?? getAttribute.call(element, 'src')
       const resolved = resolveRomSoundUrl(configured)
       if (!resolved) continue
+      if (suppressPlayback) {
+        removeAttribute.call(element, 'src')
+        if (element instanceof target.HTMLMediaElement) {
+          removeAttribute.call(element, 'autoplay')
+          element.pause()
+        }
+        continue
+      }
       if (element instanceof target.HTMLMediaElement && mediaSource?.set) {
         if (mediaSource.get?.call(element) !== resolved) mediaSource.set.call(element, resolved)
       } else {
