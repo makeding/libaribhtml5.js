@@ -43,6 +43,20 @@ iframe より前の layer に置きます。標準の `BehindIframeMediaPlaneAda
 object の CSS を複製せず、報告された `getBoundingClientRect()` を logical viewport に対する割合へ
 変換して配置します。
 
+## プレーヤー操作への pointer 穿透
+
+データ放送 iframe は全面が透明でも、一つの不透明な矩形と同じように hit test されます。そのまま
+プレーヤーへ重ねると、特に touch device で下の再生 UI がクリックできなくなります。
+
+`AribReceiverHost` は iframe を表示専用の application plane として扱い、既定で
+`pointer-events: none` と `tabindex="-1"` を設定します。描画、timer、通信、media-plane report は
+継続し、pointer event だけが下のプレーヤーへ通過します。リモコン入力は iframe の focus に頼らず
+`host.dispatchKey()` で document へ送ってください。
+
+HTML/iframe には SVG の `pointer-events: painted` に相当する、非透明 pixel だけを hit test する
+モードはありません。透明度や root の背景色を見て iframe を `display: none` にすると、debug overlay
+以外の application UI や後から表示される画面まで失われるため使用しません。
+
 ## Chromium の白い iframe backdrop
 
 Chromium は iframe owner と iframe 内 root の used `color-scheme` が異なる場合、透明 iframe の

@@ -127,6 +127,10 @@ window.__ARIB_HTML5_INSTALL__ = (child: RuntimeWindow) => {
 }
 ```
 
+`AribReceiverHost` は全面 iframe を表示専用 overlay として `pointer-events: none` にするため、
+データ放送の描画を残したまま touch/mouse 操作は下のプレーヤー UI へ通ります。放送アプリケーションの
+リモコン操作には `host.dispatchKey()` を使用し、iframe 自体へブラウザ focus を渡す必要はありません。
+
 データ放送への出入りは次の二つだけです。
 
 ```ts

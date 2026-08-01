@@ -4,6 +4,7 @@ import {
   type RuntimeEvent,
   type RuntimeWindow,
 } from './runtime/install'
+import { makeIframePointerTransparent } from './iframe-input'
 import { cloneProgramInfo, type ProgramInfo } from './program-info'
 import type { ReceiverSystemInformationOverrides } from './runtime/system-information'
 import type { ReceiverDeviceIdentifierProvider } from './device-identifier'
@@ -171,6 +172,11 @@ export class AribReceiverHost {
     this.iframe = options.iframe
     this.viewport = options.viewport
     this.videoSurface = options.videoSurface
+    // The broadcast application is a visual plane. Receiver keys are injected
+    // through dispatchKey(), so the full-size iframe must not consume pointer
+    // input intended for the player controls underneath it (especially on
+    // touch devices where even a transparent iframe wins hit testing).
+    makeIframePointerTransparent(this.iframe)
     this.ownerWindow = this.iframe.ownerDocument.defaultView ?? window
     this.origin = this.ownerWindow.location.origin
     this.onStatus = options.onStatus

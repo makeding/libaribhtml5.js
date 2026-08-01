@@ -29,6 +29,7 @@ import { BroadcastVfsSession } from '../src/service-worker-vfs.ts'
 import { runtimeEventMatchesSelector } from '../src/runtime/stream-event.ts'
 import { resolveBroadcastMediaSlot } from '../src/runtime/media-slot.ts'
 import { BehindIframeMediaPlaneAdapter } from '../src/media-plane.ts'
+import { makeIframePointerTransparent } from '../src/iframe-input.ts'
 
 const mediaRect = (left, top, width, height) => ({
   x: left,
@@ -103,6 +104,14 @@ externalAdapter.updateMediaPlane(null, {
   layer: { ...externalPlane.layer, externalPlacement: 'above-application' },
 })
 assert.equal(externalSurface.style.zIndex, '2')
+
+const receiverIframe = {
+  style: {},
+  tabIndex: 0,
+}
+makeIframePointerTransparent(receiverIframe)
+assert.equal(receiverIframe.style.pointerEvents, 'none')
+assert.equal(receiverIframe.tabIndex, -1)
 
 const origin = 'https://receiver.example/player/index.html'
 assert.deepEqual(RECEIVER_SYSTEM_IDENTITY, {
