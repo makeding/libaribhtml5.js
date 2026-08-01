@@ -829,7 +829,8 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
     observeMediaObject(object)
     installBroadcastObjectApi(object as BroadcastObject)
-    const rect = resolveBroadcastMediaSlot(object).rect
+    const slot = resolveBroadcastMediaSlot(object)
+    const rect = slot.rect
     const style = target.getComputedStyle(object)
     const videoSource = object.querySelector<HTMLParamElement>('param[name="video_src"]')?.value
     const audioSource = object.querySelector<HTMLParamElement>('param[name="audio_src"]')?.value
@@ -852,6 +853,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       layer: {
         documentOrder: Array.from(target.document.querySelectorAll('*')).indexOf(object),
         stackingPath,
+        externalPlacement: slot.element !== object &&
+          Number.parseInt(target.getComputedStyle(slot.element).zIndex, 10) > 0
+          ? 'above-application'
+          : 'behind-application',
       },
     }
     const message = JSON.stringify(plane)

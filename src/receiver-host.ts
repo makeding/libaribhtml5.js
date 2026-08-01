@@ -635,6 +635,9 @@ export class AribReceiverHost {
     return {
       documentOrder: Number(layer.documentOrder) || 0,
       stackingPath: Array.isArray(layer.stackingPath) ? layer.stackingPath : [],
+      externalPlacement: layer.externalPlacement === 'above-application'
+        ? 'above-application'
+        : 'behind-application',
     }
   }
 

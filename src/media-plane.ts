@@ -12,6 +12,11 @@ export type AribMediaPlaneStackEntry = {
 export type AribMediaPlaneLayer = {
   documentOrder: number
   stackingPath: AribMediaPlaneStackEntry[]
+  /**
+   * External compositor fallback for a media-only foreground wrapper.
+   * Omitted/behind-application keeps the host surface below the iframe.
+   */
+  externalPlacement?: 'behind-application' | 'above-application'
 }
 
 export type AribMediaPlane = {
@@ -120,21 +125,30 @@ export class DomObjectMediaPlaneAdapter implements AribMediaPlaneAdapter {
 export type BehindIframeMediaPlaneAdapterOptions = {
   surface: HTMLElement
   keepVisible?: boolean
+  /** Stacking level used for the ordinary media plane behind the iframe. */
+  behindZIndex?: string | number
+  /** Stacking level used for a foreground media-only wrapper. */
+  aboveZIndex?: string | number
 }
 
 /**
- * Simplified compatibility fallback. It cannot interleave media with elements
- * inside the application iframe; the complete iframe is always above it.
+ * Simplified iframe compositor. It normally keeps media behind the complete
+ * application iframe, but can raise a foreground media-only slot as a whole.
+ * It still cannot interleave that surface with individual elements in iframe.
  */
 export class BehindIframeMediaPlaneAdapter implements AribMediaPlaneAdapter {
   readonly renderMode = 'external' as const
 
   private readonly surface: HTMLElement
   private readonly keepVisible: boolean
+  private readonly behindZIndex: string
+  private readonly aboveZIndex: string
 
   constructor(options: BehindIframeMediaPlaneAdapterOptions) {
     this.surface = options.surface
     this.keepVisible = options.keepVisible ?? false
+    this.behindZIndex = String(options.behindZIndex ?? 0)
+    this.aboveZIndex = String(options.aboveZIndex ?? 2)
   }
 
   mountMediaPlane(_object: HTMLElement, plane: AribMediaPlane): void {
@@ -153,6 +167,7 @@ export class BehindIframeMediaPlaneAdapter implements AribMediaPlaneAdapter {
       top: '0%',
       width: '100%',
       height: '100%',
+      zIndex: this.behindZIndex,
     })
   }
 
@@ -168,6 +183,9 @@ export class BehindIframeMediaPlaneAdapter implements AribMediaPlaneAdapter {
       top: percent(plane.y, plane.screenHeight),
       width: percent(plane.width, plane.screenWidth),
       height: percent(plane.height, plane.screenHeight),
+      zIndex: plane.layer.externalPlacement === 'above-application'
+        ? this.aboveZIndex
+        : this.behindZIndex,
     })
   }
 }

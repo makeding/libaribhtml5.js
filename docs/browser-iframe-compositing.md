@@ -31,6 +31,13 @@ receiver runtime は object が wrapper の唯一の子である場合に限り 
 この wrapper は外部合成中だけ object と一緒に透明化されるため、放送ページが指定した高い `z-index` を
 削除したり、host の video を iframe より前へ出したりする必要はありません。
 
+ただし、異なる寸法の media-only wrapper が正の `z-index` を持つ場合、その video slot はページ背景の
+前に置くことを意図した foreground media です。runtime は `layer.externalPlacement` を
+`above-application` として報告します。external adapter はこの場合だけ media surface を application
+iframe より前の layer に置きます。標準の `BehindIframeMediaPlaneAdapter` は通常 `z=0`、この場合だけ
+`z=2` を使います（必要なら `behindZIndex` / `aboveZIndex` で host の stacking context に合わせます）。
+通常の全面映像や application background として使われる slot は `behind-application` のままです。
+
 `display: none`、`visibility: hidden`、`content-visibility: hidden` は矩形計測または可視判定を壊すため
 使用しません。runtime は隠す前の computed opacity を media-plane report に使い、host 側の video は
 object の CSS を複製せず、報告された `getBoundingClientRect()` を logical viewport に対する割合へ

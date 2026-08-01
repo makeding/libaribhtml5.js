@@ -28,6 +28,7 @@ import {
 import { BroadcastVfsSession } from '../src/service-worker-vfs.ts'
 import { runtimeEventMatchesSelector } from '../src/runtime/stream-event.ts'
 import { resolveBroadcastMediaSlot } from '../src/runtime/media-slot.ts'
+import { BehindIframeMediaPlaneAdapter } from '../src/media-plane.ts'
 
 const mediaRect = (left, top, width, height) => ({
   x: left,
@@ -81,6 +82,27 @@ const mediaOverlay = mediaElement({ rect: mediaRect(216, 134, 1440, 810) })
 mediaWrapperWithOverlay.children = [overlaidDefaultObject, mediaOverlay]
 mediaWrapperWithOverlay.firstElementChild = overlaidDefaultObject
 assert.equal(resolveBroadcastMediaSlot(overlaidDefaultObject).element, overlaidDefaultObject)
+
+const externalSurface = { style: {} }
+const externalAdapter = new BehindIframeMediaPlaneAdapter({ surface: externalSurface })
+const externalPlane = {
+  slotId: 'test',
+  visible: true,
+  x: 480,
+  y: 54,
+  width: 2880,
+  height: 1620,
+  screenWidth: 3840,
+  screenHeight: 2160,
+  layer: { documentOrder: 0, stackingPath: [], externalPlacement: 'behind-application' },
+}
+externalAdapter.mountMediaPlane(null, externalPlane)
+assert.equal(externalSurface.style.zIndex, '0')
+externalAdapter.updateMediaPlane(null, {
+  ...externalPlane,
+  layer: { ...externalPlane.layer, externalPlacement: 'above-application' },
+})
+assert.equal(externalSurface.style.zIndex, '2')
 
 const origin = 'https://receiver.example/player/index.html'
 assert.deepEqual(RECEIVER_SYSTEM_IDENTITY, {

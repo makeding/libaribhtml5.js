@@ -242,6 +242,7 @@ type AribMediaPlane = {
       opacity: number
       transform: string
     }>
+    externalPlacement?: 'behind-application' | 'above-application'
   }
 }
 ```
@@ -253,6 +254,12 @@ type AribMediaPlane = {
 単一の `zIndex` だけで判断せず、この path と `documentOrder` を使ってアプリケーションとの
 合成方針を決めます。ブラウザ用 `DomObjectMediaPlaneAdapter` では DOM 自身が合成するため、
 この変換は不要です。
+
+`externalPlacement` は iframe 外の video を使うブラウザ統合向けの限定的なヒントです。
+`above-application` は、既定寸法の object を包む media-only wrapper が正の `z-index` を持つ場合にだけ
+報告されます。この場合、host は media surface 全体を iframe より前の stacking level にできます。
+ただし iframe 内部との完全な interleave はできないため、映像枠と重なる application UI がある実装では
+`in-object` adapter を使用してください。
 
 ## なぜ iframe 背面方式では不足するか
 
