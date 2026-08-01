@@ -53,6 +53,11 @@ example `sh4`) themselves. The current document mount is used only when mapping
 root-relative resources such as `/60/...`; it is not included in `baseurl`.
 An injected `baseurl` cannot override the actual VFS scope.
 
+The regional fields `zipcode`, `prefecture`, and `regioncode` are also exposed
+read-only through the legacy `receiverinfo` Ureg used by broadcaster apps. The
+host owns persistence and passes a snapshot; writes inside the app do not flow
+back into the host's settings.
+
 ## Device identifiers
 
 The default package combination remains `huggy`, `Huggy ARIB HTML5 Receiver`,

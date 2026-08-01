@@ -1,4 +1,4 @@
-import { installRomSoundProtocol } from './romsound'
+import { installRomSoundProtocol } from './romsound.ts'
 import { installAribSymbolFont } from './fonts'
 import { installBroadcastClock, type BroadcastNowProvider } from './clock'
 import type {
@@ -18,6 +18,7 @@ import {
 } from './resources'
 import {
   createReceiverSystemInformation,
+  readReceiverInformationArray,
   type ReceiverSystemInformationOverrides,
 } from './system-information'
 import { cloneProgramInfo, type ProgramInfo } from '../program-info'
@@ -25,16 +26,21 @@ import {
   resolveReceiverDeviceIdentifier,
   type ReceiverDeviceIdentifierProvider,
 } from '../device-identifier'
+import {
+  runtimeEventMatchesSelector,
+  sameRuntimeEventSelector,
+  type RuntimeEvent,
+  type RuntimeEventSelector,
+} from './stream-event'
 
 export type { ProgramInfo } from '../program-info'
+export type {
+  RuntimeEvent,
+  RuntimeEventSelector,
+  RuntimeEventSource,
+} from './stream-event'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
-
-export type RuntimeEvent = {
-  source: { event_message_tag: number }
-  message_id: number
-  private_data_byte: string
-}
 
 export type RuntimeOptions = {
   /** Permit HTTP requests outside the receiver-managed application origin. */
@@ -196,7 +202,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
 
   for (const [name, value] of Object.entries(keyValues)) target[name] = value
 
-  const listeners = new Map<string, Set<(event: RuntimeEvent) => void>>()
+  const listeners = new Set<{
+    selector: RuntimeEventSelector
+    callback: (event: RuntimeEvent) => void
+  }>()
   const eventIdListeners = new Set<() => void>()
   type CacheEventListener = BroadcastResourceCacheListener
   const resourceCache = createBroadcastResourceCache(
@@ -205,9 +214,6 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     options.resourceStore,
   )
   let programInfo: ProgramInfo | null = null
-  const listenerKey = (source: { event_message_tag?: number }, id?: number) =>
-    `${source?.event_message_tag ?? 0}:${id ?? 0}`
-
   const captionTracks = new Set<number>()
   const captionListeners = new Map<CaptionListener, number>()
   const captionComponentTag = (source: string): number | null => {
@@ -285,8 +291,9 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
     if (event.data.event === 'stream-event') {
       const value = event.data.value as RuntimeEvent
-      const key = listenerKey(value?.source, value?.message_id)
-      for (const listener of listeners.get(key) ?? []) listener(value)
+      for (const listener of [...listeners]) {
+        if (runtimeEventMatchesSelector(value, listener.selector)) listener.callback(value)
+      }
     }
   })
 
@@ -402,25 +409,27 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     },
     streamEvent: {
       addGeneralEventMessageListener: (
-        selector: { source: { event_message_tag?: number }; message_id?: number },
+        selector: RuntimeEventSelector,
         callback: (event: RuntimeEvent) => void,
       ) => {
-        const key = listenerKey(selector.source, selector.message_id)
-        if (!listeners.has(key)) listeners.set(key, new Set())
-        listeners.get(key)?.add(callback)
+        if (typeof callback !== 'function') return false
+        listeners.add({ selector, callback })
         return true
       },
       removeGeneralEventMessageListener: (
-        selector?: { source?: { event_message_tag?: number }; message_id?: number },
+        selector?: RuntimeEventSelector,
         callback?: (event: RuntimeEvent) => void,
       ) => {
-        if (!selector?.source) {
+        if (!selector) {
           listeners.clear()
           return true
         }
-        const key = listenerKey(selector.source, selector.message_id)
-        if (callback) listeners.get(key)?.delete(callback)
-        else listeners.delete(key)
+        for (const registration of [...listeners]) {
+          if (sameRuntimeEventSelector(registration.selector, selector) &&
+              (!callback || callback === registration.callback)) {
+            listeners.delete(registration)
+          }
+        }
         return true
       },
       addEventIDUpdateListener: (callback: () => void) => {
@@ -440,9 +449,11 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     browserPseudo: {
       readPersistentArray: (namespace: string, structure: string) => {
         const raw = target.localStorage.getItem(`arib:nvram:${namespace}`)
-        if (!raw) return null
-        const value = JSON.parse(raw) as Record<string, unknown>
-        return structure.split(',').map((field) => value[field] ?? null)
+        if (raw) {
+          const value = JSON.parse(raw) as Record<string, unknown>
+          return structure.split(',').map((field) => value[field] ?? null)
+        }
+        return readReceiverInformationArray(namespace, structure, systemInformation)
       },
       writePersistentArray: (namespace: string, structure: string, values: unknown[]) => {
         const output = Object.fromEntries(
@@ -475,6 +486,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     value: string
     priority: string
     computed: number
+  }>()
+  const externalBackgrounds = new Map<HTMLElement, {
+    color: { value: string; priority: string }
+    image: { value: string; priority: string }
   }>()
   let nextMediaObjectId = 1
   let activeMediaObject: HTMLElement | null = null
@@ -563,6 +578,85 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     else object.style.removeProperty('opacity')
     externalObjectOpacity.delete(object)
   }
+  const restoreExternalBackground = (element: HTMLElement) => {
+    const original = externalBackgrounds.get(element)
+    if (!original) return
+    for (const [property, value] of [
+      ['background-color', original.color],
+      ['background-image', original.image],
+    ] as const) {
+      if (value.value) element.style.setProperty(property, value.value, value.priority)
+      else element.style.removeProperty(property)
+    }
+    externalBackgrounds.delete(element)
+  }
+  const restoreExternalBackgrounds = () => {
+    for (const element of [...externalBackgrounds.keys()]) {
+      restoreExternalBackground(element)
+    }
+  }
+  const setExternalMediaHole = (object: HTMLElement, enabled: boolean) => {
+    setExternalPlaceholder(object, enabled)
+    if (!enabled) {
+      restoreExternalBackgrounds()
+      return
+    }
+
+    // An external video surface sits below the iframe. Making only the media
+    // object transparent is insufficient when an ancestor or another
+    // application layer paints an opaque rectangle over the media slot.
+    // Clear backgrounds only; element content remains on the application plane.
+    const desired = new Set<HTMLElement>()
+    for (let element = object.parentElement;
+      element && element !== target.document.body &&
+      element !== target.document.documentElement;
+      element = element.parentElement) {
+      const style = target.getComputedStyle(element)
+      if (!externalBackgrounds.has(element) &&
+          (style.backgroundColor === 'rgba(0, 0, 0, 0)' ||
+           style.backgroundColor === 'transparent') &&
+          style.backgroundImage === 'none') continue
+      desired.add(element)
+    }
+    const objectRect = object.getBoundingClientRect()
+    const coversMediaSlot = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect()
+      const tolerance = 1
+      return rect.width > 0 && rect.height > 0 &&
+        rect.left <= objectRect.left + tolerance &&
+        rect.top <= objectRect.top + tolerance &&
+        rect.right >= objectRect.right - tolerance &&
+        rect.bottom >= objectRect.bottom - tolerance
+    }
+    for (const element of target.document.querySelectorAll<HTMLElement>('body *')) {
+      if (element === object || element.contains(object) || object.contains(element)) continue
+      const style = target.getComputedStyle(element)
+      if ((style.backgroundColor === 'rgba(0, 0, 0, 0)' ||
+           style.backgroundColor === 'transparent') &&
+          style.backgroundImage === 'none') continue
+      // Only the background paint is removed. Text, controls and transparent
+      // overlays such as a caption debug layer remain in the iframe.
+      if (coversMediaSlot(element)) desired.add(element)
+    }
+    for (const element of [...externalBackgrounds.keys()]) {
+      if (!desired.has(element)) restoreExternalBackground(element)
+    }
+    for (const element of desired) {
+      if (externalBackgrounds.has(element)) continue
+      externalBackgrounds.set(element, {
+        color: {
+          value: element.style.getPropertyValue('background-color'),
+          priority: element.style.getPropertyPriority('background-color'),
+        },
+        image: {
+          value: element.style.getPropertyValue('background-image'),
+          priority: element.style.getPropertyPriority('background-image'),
+        },
+      })
+      element.style.setProperty('background-color', 'transparent', 'important')
+      element.style.setProperty('background-image', 'none', 'important')
+    }
+  }
   const callMediaPlaneAdapter = (callback: () => void) => {
     try {
       callback()
@@ -573,7 +667,8 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
   }
   const unmountMediaPlane = (reason: 'slot-removed' | 'document-unload') => {
-    if (activeMediaObject) setExternalPlaceholder(activeMediaObject, false)
+    if (activeMediaObject) setExternalMediaHole(activeMediaObject, false)
+    else restoreExternalBackgrounds()
     if (mediaPlaneAdapter) {
       callMediaPlaneAdapter(() => mediaPlaneAdapter.unmountMediaPlane(reason))
     }
@@ -644,7 +739,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     } else if (message !== lastMediaPlane && mediaPlaneAdapter) {
       callMediaPlaneAdapter(() => mediaPlaneAdapter.updateMediaPlane(object, plane))
     }
-    setExternalPlaceholder(object, (mediaPlaneAdapter?.renderMode ?? 'external') === 'external')
+    setExternalMediaHole(object, (mediaPlaneAdapter?.renderMode ?? 'external') === 'external')
     if (message === lastMediaPlane) return
     lastMediaPlane = message
     postRuntime('media-plane', plane)

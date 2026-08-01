@@ -22,6 +22,7 @@ export type {
 export { installRuntime } from './runtime/install'
 export {
   createReceiverSystemInformation,
+  readReceiverInformationArray,
   RECEIVER_SYSTEM_IDENTITY,
 } from './runtime/system-information'
 export type {
@@ -31,7 +32,16 @@ export type {
 } from './runtime/system-information'
 export { cloneProgramInfo } from './program-info'
 export type { ProgramInfo } from './program-info'
-export type { RuntimeEvent, RuntimeOptions, RuntimeWindow } from './runtime/install'
+export { runtimeEventMatchesSelector } from './runtime/stream-event'
+export type {
+  RuntimeEvent,
+  RuntimeEventSelector,
+  RuntimeEventSource,
+} from './runtime/stream-event'
+export type {
+  RuntimeOptions,
+  RuntimeWindow,
+} from './runtime/install'
 export {
   DEFAULT_RECEIVER_DEVICE_IDENTIFIER,
   resolveReceiverDeviceIdentifier,
@@ -56,7 +66,7 @@ export {
   deferRomSoundMarkup,
   installRomSoundProtocol,
   resolveRomSoundUrl,
-} from './runtime/romsound'
+} from './runtime/romsound.ts'
 export {
   prefixBroadcastRootAttributes,
   prepareBroadcastHtml,

@@ -130,6 +130,7 @@ export class AribReceiverHost {
   private logicalHeight = 2160
   private captionComponentTags: number[] = []
   private programInfo: ProgramInfo | null = null
+  private readonly pendingStreamEvents: RuntimeEvent[] = []
   private broadcastClock: (AribBroadcastClock & { monotonicMilliseconds: number }) | null = null
   private video: HTMLVideoElement | null = null
   private mediaPlaneEnabled = false
@@ -232,9 +233,9 @@ export class AribReceiverHost {
     this.applicationExited = false
     this.iframe.style.removeProperty('display')
     this.invalidateRuntime('document-unload')
-    // The transport-owned LCT background is not available to this runtime yet.
-    // Keep uncovered receiver-plane pixels black until an application stage
-    // color is reported instead of flashing the browser canvas white.
+    // The receiver-owned background plane remains below an external video
+    // surface. It must not be moved into the iframe, where it would cover the
+    // video together with the application canvas.
     this.viewport.style.backgroundColor = '#000'
     this.onStatus?.(status)
     this.onUrlChange?.(resolved.pathname)
@@ -249,6 +250,7 @@ export class AribReceiverHost {
     this.assertAlive()
     if (this.applicationExited) return
     this.applicationExited = true
+    this.pendingStreamEvents.length = 0
     this.clearApplicationLoadTimer()
     this.invalidateRuntime('application-exit')
     this.iframe.style.display = 'none'
@@ -370,12 +372,21 @@ export class AribReceiverHost {
   }
 
   emitStreamEvent(value: RuntimeEvent): void {
-    this.postToRuntime('stream-event', { value })
+    if (this.destroyed || this.applicationExited) return
+    if (this.activeRuntimeId) {
+      this.postToRuntime('stream-event', { value })
+      return
+    }
+    // Signalling can arrive before the application bootstrap is installed.
+    // Retain a small receiver-owned backlog rather than dropping those events.
+    if (this.pendingStreamEvents.length === 64) this.pendingStreamEvents.shift()
+    this.pendingStreamEvents.push(value)
   }
 
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    this.pendingStreamEvents.length = 0
     this.ownerWindow.removeEventListener('message', this.handleRuntimeMessage)
     this.iframe.removeEventListener('load', this.handleFrameLoad)
     this.resizeObserver.disconnect()
@@ -440,6 +451,9 @@ export class AribReceiverHost {
       this.onUrlChange?.(String(message.url ?? ''))
       this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
       if (this.programInfo) this.postToRuntime('program-info', { value: this.programInfo })
+      for (const value of this.pendingStreamEvents.splice(0)) {
+        this.postToRuntime('stream-event', { value })
+      }
       this.onStatus?.('ランタイム導入済み')
       this.onLifecycle?.({
         type: 'installed',

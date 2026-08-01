@@ -16,6 +16,8 @@ export type ReceiverSystemInformation = ReceiverSystemIdentity & {
 export type ReceiverSystemInformationOverrides = Partial<ReceiverSystemIdentity> &
   Record<string, unknown>
 
+const RECEIVER_INFORMATION_FIELDS = new Set(['zipcode', 'prefecture', 'regioncode'])
+
 export const RECEIVER_SYSTEM_IDENTITY: Readonly<ReceiverSystemIdentity> = Object.freeze({
   browsername: packageMetadata.name,
   browserversion: packageMetadata.version,
@@ -32,4 +34,21 @@ export function createReceiverSystemInformation(
     ...overrides,
     baseurl,
   }
+}
+
+/**
+ * Project receiver-owned regional settings into the legacy receiverinfo Ureg.
+ * The host remains the sole owner of persistence; broadcast applications only
+ * receive the snapshot supplied in systemInformation.
+ */
+export function readReceiverInformationArray(
+  namespace: string,
+  structure: string,
+  systemInformation: ReceiverSystemInformation,
+): unknown[] | null {
+  if (!namespace.toLowerCase().includes('receiverinfo')) return null
+  return structure.split(',').map((field) => {
+    const key = field.trim().toLowerCase()
+    return RECEIVER_INFORMATION_FIELDS.has(key) ? systemInformation[key] ?? null : null
+  })
 }

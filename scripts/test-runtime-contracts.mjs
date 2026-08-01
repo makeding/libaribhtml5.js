@@ -16,6 +16,7 @@ import {
 import { dispatchProgramGuideRequest } from '../src/program-guide.ts'
 import {
   createReceiverSystemInformation,
+  readReceiverInformationArray,
   RECEIVER_SYSTEM_IDENTITY,
 } from '../src/runtime/system-information.ts'
 import { cloneProgramInfo } from '../src/program-info.ts'
@@ -24,6 +25,7 @@ import {
   resolveReceiverDeviceIdentifier,
 } from '../src/device-identifier.ts'
 import { BroadcastVfsSession } from '../src/service-worker-vfs.ts'
+import { runtimeEventMatchesSelector } from '../src/runtime/stream-event.ts'
 
 const origin = 'https://receiver.example/player/index.html'
 assert.deepEqual(RECEIVER_SYSTEM_IDENTITY, {
@@ -44,6 +46,52 @@ assert.deepEqual(createReceiverSystemInformation('https://receiver.example/data-
   decoder: 'native',
   baseurl: 'https://receiver.example/data-broadcast/',
 })
+const regionalSystemInformation = createReceiverSystemInformation(
+  'https://receiver.example/data-broadcast/',
+  { zipcode: '1234567', prefecture: 13, regioncode: 0x1c7 },
+)
+assert.deepEqual(
+  readReceiverInformationArray(
+    'receiverinfo/profile',
+    'zipcode,prefecture,regioncode,unsupported',
+    regionalSystemInformation,
+  ),
+  ['1234567', 13, 0x1c7, null],
+)
+assert.equal(
+  readReceiverInformationArray('application/private', 'zipcode', regionalSystemInformation),
+  null,
+)
+const streamEvent = {
+  source: {
+    original_network_id: 4,
+    tlv_stream_id: 11,
+    service_id: 101,
+    event_message_tag: 50,
+  },
+  message_group_id: 1,
+  message_id: 176,
+  message_version: 7,
+  private_data_byte: '\u0001\u00ff',
+}
+assert.equal(runtimeEventMatchesSelector(streamEvent, {
+  source: { event_message_tag: 50 },
+  message_id: 176,
+}), true)
+assert.equal(runtimeEventMatchesSelector(streamEvent, {
+  source: { original_network_id: 4, tlv_stream_id: 11, service_id: 101 },
+  message_group_id: 1,
+  message_id: 176,
+  message_version: 7,
+}), true)
+assert.equal(runtimeEventMatchesSelector(streamEvent, {
+  source: { event_message_tag: 40 },
+  message_id: 176,
+}), false)
+assert.equal(runtimeEventMatchesSelector(streamEvent, {
+  source: { event_message_tag: 50 },
+  message_version: 8,
+}), true)
 
 const programStart = new Date('2026-07-31T12:00:00Z')
 const program = cloneProgramInfo({

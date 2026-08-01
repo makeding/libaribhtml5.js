@@ -42,11 +42,25 @@ MMT の source of truth は LCT です。実装時の優先順位は次の通り
 - `external` adapter では、外部映像面を iframe 越しに見せるため application canvas を透明化する。
   その場合は receiver 背景、外部映像、iframe を別々の sibling layer として、この順に重ねる。
   receiver 背景と iframe を同じ wrapper に入れると、外部映像を両者の間へ合成できない。
+  application canvas を透明化する前の stage 色は receiver viewport の最背面に移し、映像領域外に
+  host アプリの背景が露出しないようにする。stage 色を取得できない間の fallback は黒とする。
+- dark theme の host に light canvas の放送ページを埋め込む場合、iframe owner に
+  `color-scheme: light` を明示する。Chromium は owner と iframe 内の root で used color scheme が
+  異なると、`html` / `body` の computed background が透明でも、不透明な scheme backdrop
+  （light の場合は白）を frame canvas に描画する。これは CSS の `background`、iframe の
+  `z-index`、`opacity` では除去できない。
+- `#vstream` 等、media object の祖先が不透明な背景を描く場合、external runtime はその祖先の
+  背景だけを media object の存続中に透明化する。兄弟要素の UI は変更しない。video を iframe
+  より前へ上げて穴を作ってはならない。そうすると字幕説明など、映像より前にあるべき
+  application UI まで隠れる。
 - 映像の位置と寸法は、どちらの adapter でも放送アプリケーションが宣言した video object に従う。
 - 放送アプリケーション内の背景画像、要素背景、半透明 UI は multimedia plane の描画であり、
   LCT の背景色を置き換えない。
 - native compositor でも DOM 実装でも、LCT の単色を iframe 内の装飾要素として実装しない。
   動画領域の切り抜きや iframe のページ遷移から独立した、受信機所有の最背面レイヤーにする。
+
+Chromium の `color-scheme` backdrop、external media hole、DevTools での切り分けは
+[ブラウザ iframe 合成の注意事項](browser-iframe-compositing.md)も参照してください。
 
 根拠は `../ARIB-docs` の次の条項です。
 
@@ -92,6 +106,9 @@ const iframe = document.querySelector<HTMLIFrameElement>('#broadcast')!
 const viewport = document.querySelector<HTMLElement>('#viewport')!
 const normalPlayer = document.querySelector<HTMLElement>('#normal-player')!
 const video = document.querySelector<HTMLVideoElement>('#video')!
+
+// dark theme の host でも、放送ページの標準 light canvas と scheme を一致させる。
+iframe.style.colorScheme = 'light'
 
 const host = new AribReceiverHost({
   iframe,
