@@ -31,6 +31,13 @@ pnpm dev
 起動後、Vite に表示された URL をブラウザで開いてください。放送時と同じ自動起動の
 流れを試す場合は**透明起動ページ**、画面を直接開く場合は**表示ページ**を選択します。
 
+### 動作確認済みブラウザ
+
+- Microsoft Edge `150.0.4078.105`（Chromium ベース）
+- Firefox `153.0`
+
+Safari には未解決の互換性問題があるため、現時点では対応していません。
+
 ### 注意事項
 
 - 放送アプリケーションの一部機能は、放送局のサーバー上にあるデータを参照します。
@@ -109,6 +116,13 @@ pnpm dev
 After starting the development server, open the URL shown by Vite. Choose
 **透明起動ページ** to exercise the broadcast autostart flow, or **表示ページ**
 to open the visible application page directly.
+
+### Tested browsers
+
+- Microsoft Edge `150.0.4078.105` (Chromium-based)
+- Firefox `153.0`
+
+Safari is not currently supported because compatibility issues remain unresolved.
 
 ### Notes
 
