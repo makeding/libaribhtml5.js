@@ -19,28 +19,30 @@
 
 ## 日本語
 
-ブラウザ上で動作する ARIB HTML5 受信機ランタイムのプロトタイプです。初期デモでは、
-展開済みの BS4K アプリケーションを放送時のパスで配信し、アプリケーションの
-スクリプトが実行される前に受信機 API のポリフィルを注入します。
+本プロジェクトは、Web ブラウザ上で動作する ARIB HTML5 受信機ランタイムの
+プロトタイプです。デモでは、展開済みの BS4K アプリケーションを放送時と同じ
+パス構成で配信し、実行前に受信機 API の互換レイヤーを組み込みます。
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-Vite が出力した URL を開いてください。放送による自動起動アプリケーションには
-**透明起動ページ**を、表示ページを直接確認するには**表示ページ**を使用します。
+起動後、Vite に表示された URL をブラウザで開いてください。放送時と同じ自動起動の
+流れを試す場合は**透明起動ページ**、画面を直接開く場合は**表示ページ**を選択します。
 
 ### 注意事項
 
-- 放送アプリケーションが利用する一部のオンラインデータは、ブラウザから放送局の
-  サーバーへ直接リクエストされます。現在のデモでは、安全のため、このような外部への
-  ネットワークリクエストをすべてブロックしています。
-- ACAS のシリアル番号は `0721 0721 0721 0724 9674` に固定してエミュレートしています。
+- 放送アプリケーションの一部機能は、放送局のサーバー上にあるデータを参照します。
+  このデモでは安全のため、ブラウザから外部サーバーへの通信をすべて遮断しています。
+  そのため、オンライン連携を前提とする機能は動作しません。
+- 受信機情報として返す ACAS 番号には、デモ用の固定値
+  `0721 0721 0721 0724 9674` を使用しています。
 
 ### SDK バンドル
 
-npm から利用する場合は、パッケージをインストールして ESM エントリを import します。
+npm パッケージとして利用する場合は、以下のようにインストールし、
+ESM エントリポイントから読み込みます。
 
 ```sh
 npm install libaribhtml5
@@ -50,69 +52,74 @@ npm install libaribhtml5
 import { AribReceiverHost, installRuntime } from 'libaribhtml5'
 ```
 
-従来の `<script>` 向け IIFE は `libaribhtml5/iife`、Service Worker ファイルは
-`libaribhtml5/arib-vfs-sw.js` として公開されます。
+`<script>` タグから読み込む IIFE 版は `libaribhtml5/iife`、Service Worker は
+`libaribhtml5/arib-vfs-sw.js` から利用できます。
 
 ```sh
 pnpm build:sdk
 ```
 
-このコマンドは `dist/sdk/libaribhtml5.js` と、ブラウザ VFS 用の
-`dist/sdk/arib-vfs-sw.js` を生成します。SDK は `AribReceiverHost`、
-`ServiceWorkerBroadcastVfs`、`installRuntime` を持つ `window.ARIBHTML5` を公開します。受信機内蔵音は
-`src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、SDK のビルド時に
-すべてデータ URL として単一の JavaScript バンドルへ埋め込まれます。iOS/iPadOS では短い内蔵音が
-主動画の media session を奪わないよう、`romsound://` の再生を成功扱いの no-op にします。
+このコマンドを実行すると、`dist/sdk/libaribhtml5.js` とブラウザ VFS 用の
+`dist/sdk/arib-vfs-sw.js` が生成されます。`window.ARIBHTML5` からは
+`AribReceiverHost`、`ServiceWorkerBroadcastVfs`、`installRuntime` を利用できます。
 
-プレーヤーへ統合する際のメディアスロット、adapter、レイヤー、ライフサイクル、字幕の契約は
+受信機の内蔵音は `src/runtime/romsound/` 以下で個別の MP3 ファイルとして管理され、
+SDK のビルド時にデータ URL として単一の JavaScript バンドルへ埋め込まれます。
+iOS/iPadOS では、短い内蔵音の再生によって主映像の Media Session が切り替わるのを
+防ぐため、`romsound://` の再生処理は音を出さずに成功を返します。
+
+プレーヤーへ組み込む際のメディアスロット、アダプター、レイヤー構成、
+ライフサイクル、字幕連携については、
 [メディアプレーン共通統合ガイド](docs/media-plane-integration.md)を参照してください。
 [ブラウザ iframe 合成の注意事項](docs/browser-iframe-compositing.md)には、Chromium の
 `color-scheme` backdrop と external media hole の実装条件をまとめています。
-データ放送へ入る時は `host.loadApplication()`、通常プレーヤーへ戻す時は
+データ放送を開始する際は `host.loadApplication()`、通常のプレーヤー画面へ戻る際は
 `host.exitApplication()` を使用します。
-MH-AIT の `AUTOSTART` / `PRESENT` / `KILL`、紅白等の連動 application、
-`replaceApplication()` と EMT の責務境界は
+MH-AIT の `AUTOSTART` / `PRESENT` / `KILL`、番組連動アプリケーション、
+`replaceApplication()` と EMT の役割分担については、
 [MH-AIT アプリケーションライフサイクル](docs/application-lifecycle.md)を参照してください。
 
-録画再生ではシステム時計ではなく、ストリームの NTP と再生位置を
-`host.setBroadcastClock()` へ渡します。変換例は
+録画再生時はシステム時刻ではなく、ストリームの NTP と再生位置を
+`host.setBroadcastClock()` に渡します。時刻の変換例は
 [録画再生時の放送時計](docs/broadcast-clock.md)を参照してください。
 
-EIT 由来の番組情報と受信機固有情報を host から渡す契約は
-[receiver host contracts](docs/receiver-host-contracts.md)を参照してください。
+EIT 由来の番組情報や受信機固有情報をホストから受け渡すインターフェースについては、
+[受信機ホスト契約](docs/receiver-host-contracts.md)を参照してください。
 
 Service Worker の `/data-broadcast/` ルーティング、データ放送リソースの
-store/update/release ライフサイクル、および ARIB 追加記号フォントは
+保存・更新・解放の流れ、および ARIB 追加記号フォントについては、
 [放送リソースとフォント](docs/broadcast-resources-and-fonts.md)を参照してください。
 
-Android/WebView の「放送予定」検索結果から受信機所有の番組表・番組詳細を開く場合は、
-[`onOpenProgramGuide` とブラウザ fallback](docs/android-program-guide.md)を参照してください。
+Android/WebView で「放送予定」の検索結果から受信機側の番組表や番組詳細画面を
+開く場合は、[`onOpenProgramGuide` とブラウザへのフォールバック](docs/android-program-guide.md)を
+参照してください。
 
 ## English
 
-Browser-hosted ARIB HTML5 receiver-runtime prototype. The initial demo serves the
-extracted BS4K application under its broadcast path and injects receiver API
-polyfills before the application scripts execute.
+libaribhtml5 is a prototype ARIB HTML5 receiver runtime that runs in the browser.
+The demo serves an extracted BS4K application using its original broadcast path
+layout and installs a compatibility layer for the receiver APIs before the
+application starts.
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-Open the URL printed by Vite. Use **透明起動ページ** for the broadcast autostart
-application and **表示ページ** to inspect the visible page directly.
+After starting the development server, open the URL shown by Vite. Choose
+**透明起動ページ** to exercise the broadcast autostart flow, or **表示ページ**
+to open the visible application page directly.
 
 ### Notes
 
-- Some online data used by broadcast applications is requested directly from the
-  browser to the broadcaster's servers. For safety, the current demo blocks all
-  such external network requests.
-- The ACAS serial number is emulated with the fixed value
-  `0721 0721 0721 0724 9674`.
+- Some broadcast application features fetch data hosted on the broadcaster's
+  servers. For safety, this demo blocks all requests to external servers, so
+  features that depend on online services will not work.
+- The receiver reports the demo ACAS number `0721 0721 0721 0724 9674`.
 
 ### SDK bundle
 
-Install the package to use its typed ESM entry point:
+Install the package and import its typed ESM entry point:
 
 ```sh
 npm install libaribhtml5
@@ -122,28 +129,47 @@ npm install libaribhtml5
 import { AribReceiverHost, installRuntime } from 'libaribhtml5'
 ```
 
-The browser-global IIFE remains available as `libaribhtml5/iife`, and the
-Service Worker is exported as `libaribhtml5/arib-vfs-sw.js`.
+An IIFE build for `<script>` tags is available as `libaribhtml5/iife`. The
+Service Worker is available as `libaribhtml5/arib-vfs-sw.js`.
 
 ```sh
 pnpm build:sdk
 ```
 
-This produces `dist/sdk/libaribhtml5.js` plus `dist/sdk/arib-vfs-sw.js` for the
-optional browser VFS, and exposes `window.ARIBHTML5` with `AribReceiverHost`,
-`ServiceWorkerBroadcastVfs`, and `installRuntime`. Receiver built-in sounds are maintained
-as individual MP3 files under `src/runtime/romsound/`; the SDK build inlines all
-of them as data URLs in the single JavaScript bundle. On iOS and iPadOS,
-`romsound://` playback is a successful no-op so a short receiver sound cannot
-replace the main video's active media session.
+This command produces `dist/sdk/libaribhtml5.js` and
+`dist/sdk/arib-vfs-sw.js` for the browser VFS. The global
+`window.ARIBHTML5` object exposes `AribReceiverHost`,
+`ServiceWorkerBroadcastVfs`, and `installRuntime`.
 
-See the [common media-plane integration guide](docs/media-plane-integration.md)
-for the shared video layering, geometry, lifecycle, and caption contract.
-See [broadcast resources, Worker routing, and fonts](docs/broadcast-resources-and-fonts.md)
-for the `/data-broadcast/` namespace and cache/font lifecycle.
-See [Android program-guide integration](docs/android-program-guide.md) for handing a
-future-program result to a receiver-owned WebView/native EPG with a browser fallback.
-See [receiver host contracts](docs/receiver-host-contracts.md) for program metadata
-and receiver-owned system information.
-See [MH-AIT application lifecycle](docs/application-lifecycle.md) for AUTOSTART,
-PRESENT, KILL, `replaceApplication()`, and the EMT delivery boundary.
+Built-in receiver sounds are stored as individual MP3 files under
+`src/runtime/romsound/`. The SDK build inlines them as data URLs in the
+JavaScript bundle. On iOS and iPadOS, `romsound://` requests succeed without
+playing audio, preventing a short receiver sound from taking over the main
+video's Media Session.
+
+The [common media-plane integration guide](docs/media-plane-integration.md)
+covers media slots, adapters, layering, lifecycle management, and caption
+integration. The [browser iframe compositing notes](docs/browser-iframe-compositing.md)
+describe the Chromium `color-scheme` backdrop and the requirements for an
+external media hole.
+
+Call `host.loadApplication()` when entering data broadcasting and
+`host.exitApplication()` when returning to the regular player. See
+[MH-AIT application lifecycle](docs/application-lifecycle.md) for `AUTOSTART`,
+`PRESENT`, `KILL`, linked applications, `replaceApplication()`, and the EMT
+delivery boundary.
+
+For recorded playback, pass stream-derived NTP time and the current playback
+position to `host.setBroadcastClock()` instead of using the system clock. See
+[broadcast clocks for recorded playback](docs/broadcast-clock.md) for a
+conversion example.
+
+See [receiver host contracts](docs/receiver-host-contracts.md) for passing EIT
+program metadata and receiver-specific system information from the host. See
+[broadcast resources, Worker routing, and fonts](docs/broadcast-resources-and-fonts.md)
+for the `/data-broadcast/` namespace, resource lifecycle, and ARIB symbol fonts.
+
+For Android/WebView integrations, see
+[`onOpenProgramGuide` and browser fallback](docs/android-program-guide.md) for
+opening the receiver's program guide or program details from a search result
+for an upcoming program.
