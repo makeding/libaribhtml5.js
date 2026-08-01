@@ -18,6 +18,7 @@ import {
   createReceiverSystemInformation,
   readReceiverInformationArray,
   RECEIVER_SYSTEM_IDENTITY,
+  synchronizeReceiverCompatibilityStorage,
 } from '../src/runtime/system-information.ts'
 import { cloneProgramInfo } from '../src/program-info.ts'
 import {
@@ -58,6 +59,27 @@ assert.deepEqual(
   ),
   ['1234567', 13, 0x1c7, null],
 )
+const receiverCompatibilityStorage = new Map()
+const receiverStorage = {
+  setItem(key, value) { receiverCompatibilityStorage.set(key, String(value)) },
+  removeItem(key) { receiverCompatibilityStorage.delete(key) },
+}
+synchronizeReceiverCompatibilityStorage(receiverStorage, regionalSystemInformation)
+assert.equal(receiverCompatibilityStorage.get('_zipcode'), '1234567')
+synchronizeReceiverCompatibilityStorage(
+  receiverStorage,
+  createReceiverSystemInformation('https://receiver.example/data-broadcast/', {
+    zipcode: '210-0015',
+  }),
+)
+assert.equal(receiverCompatibilityStorage.get('_zipcode'), '2100015')
+synchronizeReceiverCompatibilityStorage(
+  receiverStorage,
+  createReceiverSystemInformation('https://receiver.example/data-broadcast/', {
+    zipcode: 'invalid',
+  }),
+)
+assert.equal(receiverCompatibilityStorage.has('_zipcode'), false)
 assert.equal(
   readReceiverInformationArray('application/private', 'zipcode', regionalSystemInformation),
   null,
@@ -291,5 +313,42 @@ vfsFiles.clear()
 await vfsSession.ensure('carousel/index.html', revision)
 assert.equal(vfsBegins, 2)
 assert.deepEqual([...vfsFiles.get('carousel/index.html')], [1, 2, 3])
+
+// dispose() waits for an active write but prevents queued resources from
+// repopulating a backend after its owner resets the VFS.
+let releaseActiveWrite
+let activeWriteStarted
+const activeWriteGate = new Promise(resolve => { releaseActiveWrite = resolve })
+const activeWriteSignal = new Promise(resolve => { activeWriteStarted = resolve })
+const disposedFiles = new Map()
+const disposableSession = new BroadcastVfsSession({
+  async begin() {
+    disposedFiles.clear()
+  },
+  async put(resource) {
+    activeWriteStarted()
+    await activeWriteGate
+    disposedFiles.set(resource.path, Uint8Array.from(resource.data))
+  },
+  async canRead(path) {
+    return disposedFiles.has(path)
+  },
+}, {
+  schedule: task => queueMicrotask(task),
+})
+await disposableSession.beginSession()
+disposableSession.enqueue({ path: 'active.bin', data: new Uint8Array([1]) })
+disposableSession.enqueue({ path: 'queued.bin', data: new Uint8Array([2]) })
+await activeWriteSignal
+const disposingSession = disposableSession.dispose()
+releaseActiveWrite()
+await disposingSession
+assert.equal(disposedFiles.has('active.bin'), true)
+assert.equal(disposedFiles.has('queued.bin'), false)
+assert.throws(
+  () => disposableSession.enqueue({ path: 'late.bin', data: new Uint8Array([3]) }),
+  /disposed/,
+)
+await assert.rejects(disposableSession.beginSession(), /disposed/)
 
 console.log('runtime URL and resource lifecycle contracts passed')

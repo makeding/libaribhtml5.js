@@ -19,6 +19,7 @@ import {
 import {
   createReceiverSystemInformation,
   readReceiverInformationArray,
+  synchronizeReceiverCompatibilityStorage,
   type ReceiverSystemInformationOverrides,
 } from './system-information'
 import { cloneProgramInfo, type ProgramInfo } from '../program-info'
@@ -422,6 +423,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     broadcastBaseUrl.href,
     options.systemInformation,
   )
+  synchronizeReceiverCompatibilityStorage(target.localStorage, systemInformation)
 
   defineNavigatorProperty(target.navigator, 'receiverDevice', {
     getSystemInformation: () => ({ ...systemInformation }),
@@ -564,6 +566,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   let nextMediaObjectId = 1
   let activeMediaObject: HTMLElement | null = null
   let lastMediaPlane = ''
+  let stageStyleReported = false
   let observedMediaObject: HTMLElement | null = null
   let mediaPlaneFrame: number | null = null
   let reportMediaPlane = () => undefined
@@ -783,6 +786,16 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     activeMediaObject = null
   }
   reportMediaPlane = () => {
+    // Sample the receiver background on the first animation frame after the
+    // document is ready.  Several broadcast applications select their 4K/8K
+    // theme from a DOM-ready callback; sampling in the same microtask as
+    // DOMContentLoaded captures the transient default (commonly white).
+    // This must also run before setExternalMediaHole() clears application
+    // backgrounds for the external video plane.
+    if (!stageStyleReported && target.document.readyState !== 'loading') {
+      reportStageStyle()
+      stageStyleReported = true
+    }
     const object = target.document.querySelector<HTMLElement>(
       'object[type="video/x-arib2-broadcast"], ' +
       'object[data-arib-type="video/x-arib2-broadcast"]',
@@ -855,21 +868,16 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   const startDocumentRuntime = () => {
     installNavigationPolicy()
     // Static broadcast objects must have their receiver API before later
-    // DOMContentLoaded/ready listeners call isCaptionExistent(), but the
-    // application's ready handler may still add its BS4K/BS8K theme class.
-    // Defer stage sampling until the current event dispatch has completed so
-    // the receiver does not publish the page's transient default (usually
-    // white) and then expose it around a dark BS8K media slot.
+    // DOMContentLoaded/ready listeners call isCaptionExistent().  Stage
+    // sampling is intentionally left to the scheduled animation-frame report
+    // below, after application ready callbacks have selected their theme.
     const object = target.document.querySelector<HTMLElement>(
       'object[type="video/x-arib2-broadcast"], ' +
       'object[data-arib-type="video/x-arib2-broadcast"]',
     )
     if (object) installBroadcastObjectApi(object as BroadcastObject)
-    queueMicrotask(() => {
-      reportStageStyle()
-      prepareExternalMediaPlaneCanvas()
-      reportMediaPlane()
-    })
+    prepareExternalMediaPlaneCanvas()
+    scheduleMediaPlaneReport()
   }
 
   // Establish the host session before observing the parser.  A broadcast

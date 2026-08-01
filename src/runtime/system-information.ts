@@ -37,6 +37,25 @@ export function createReceiverSystemInformation(
 }
 
 /**
+ * Mirror receiver-owned regional data into compatibility keys used directly
+ * by broadcaster libraries. NHK's nhksh.getZipCode(), for example, reads the
+ * historical `_zipcode` localStorage key instead of receiverinfo NVRAM.
+ */
+export function synchronizeReceiverCompatibilityStorage(
+  storage: Pick<Storage, 'setItem' | 'removeItem'>,
+  systemInformation: ReceiverSystemInformation,
+): void {
+  const supplied = systemInformation.zipcode
+  const zipcode = typeof supplied === 'string' ? supplied.replace('-', '') : ''
+  try {
+    if (/^\d{7}$/.test(zipcode)) storage.setItem('_zipcode', zipcode)
+    else storage.removeItem('_zipcode')
+  } catch {
+    // Disabled DOM storage must not prevent runtime installation.
+  }
+}
+
+/**
  * Project receiver-owned regional settings into the legacy receiverinfo Ureg.
  * The host remains the sole owner of persistence; broadcast applications only
  * receive the snapshot supplied in systemInformation.

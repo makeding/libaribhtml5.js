@@ -64,6 +64,7 @@ export class BroadcastVfsSession {
   private drainScheduled = false
   private ioTail: Promise<void> = Promise.resolve()
   private sessionReady: Promise<void> = Promise.resolve()
+  private disposed = false
 
   constructor(backend: BroadcastVfsBackend, options: BroadcastVfsSessionOptions = {}) {
     this.backend = backend
@@ -84,6 +85,7 @@ export class BroadcastVfsSession {
   }
 
   beginSession(): Promise<void> {
+    if (this.disposed) return Promise.reject(new Error('Broadcast VFS session is disposed'))
     this.generation += 1
     this.queue.splice(0)
     this.mirror.clear()
@@ -94,6 +96,7 @@ export class BroadcastVfsSession {
   }
 
   enqueue(resource: BroadcastVfsResource): number {
+    if (this.disposed) throw new Error('Broadcast VFS session is disposed')
     const owned = copyResource(resource)
     const revision = ++this.nextRevision
     this.mirror.set(owned.path, owned)
@@ -109,6 +112,7 @@ export class BroadcastVfsSession {
 
   /** Ensure a staged path is readable, replaying the page-owned mirror if needed. */
   async ensure(path: string, revision = this.nextRevision): Promise<void> {
+    if (this.disposed) throw new Error('Broadcast VFS session is disposed')
     const generation = this.generation
     const normalizedPath = String(path).replace(/^\/+/, '')
     await this.waitFor(revision)
@@ -122,6 +126,23 @@ export class BroadcastVfsSession {
         throw new Error(`Broadcast VFS resource is not available: /${normalizedPath}`)
       }
     })
+  }
+
+  /**
+   * Stop accepting resources, discard queued writes, and wait for the one
+   * backend operation which may already be running. The backend itself remains
+   * owned by the caller and can be reset or disposed after this resolves.
+   */
+  async dispose(): Promise<void> {
+    if (!this.disposed) {
+      this.disposed = true
+      this.generation += 1
+      this.queue.splice(0)
+      this.mirror.clear()
+      this.completedRevision = this.nextRevision
+      this.resolveWaiters()
+    }
+    await this.ioTail
   }
 
   private appendIo(operation: () => Promise<void>): Promise<void> {
@@ -178,6 +199,9 @@ export class ServiceWorkerBroadcastVfs {
   private readonly uniqueBasenameFallback: boolean
   private registration: ServiceWorkerRegistration | null = null
   private ready: Promise<ServiceWorkerRegistration> | null = null
+  private readonly inFlight = new Set<Promise<VfsReply>>()
+  private disposing: Promise<void> | null = null
+  private disposed = false
 
   constructor(options: ServiceWorkerBroadcastVfsOptions) {
     this.workerUrl = new URL(options.workerUrl, window.location.href)
@@ -193,6 +217,9 @@ export class ServiceWorkerBroadcastVfs {
   }
 
   initialize(): Promise<ServiceWorkerRegistration> {
+    if (this.disposed || this.disposing) {
+      return Promise.reject(new Error('Broadcast VFS backend is disposed'))
+    }
     if (this.ready) return this.ready
     this.ready = (async () => {
       if (!('serviceWorker' in navigator)) {
@@ -250,18 +277,68 @@ export class ServiceWorkerBroadcastVfs {
     await this.request({ type: 'arib-vfs-reset' })
   }
 
-  private async request(message: Record<string, unknown>, transfer: Transferable[] = []): Promise<VfsReply> {
+  /**
+   * Clear the receiver-owned VFS session after outstanding requests finish.
+   * The shared Service Worker registration is intentionally retained so other
+   * tabs and future receiver instances keep a stable scoped fetch handler.
+   */
+  dispose(): Promise<void> {
+    if (this.disposing) return this.disposing
+    if (this.disposed) return Promise.resolve()
+    this.disposing = (async () => {
+      await Promise.allSettled([...this.inFlight])
+      // No registration means this instance never created VFS state. Avoid
+      // registering a worker solely to tear an unused backend down.
+      if (this.registration) {
+        await this.performRequestWithRegistration(
+          this.registration,
+          { type: 'arib-vfs-reset' },
+        )
+      }
+      this.registration = null
+      this.ready = null
+      this.disposed = true
+    })()
+    return this.disposing
+  }
+
+  private request(
+    message: Record<string, unknown>,
+    transfer: Transferable[] = [],
+  ): Promise<VfsReply> {
+    if (this.disposed || this.disposing) {
+      return Promise.reject(new Error('Broadcast VFS backend is disposed'))
+    }
+    const operation = this.performRequest(message, transfer)
+    this.inFlight.add(operation)
+    void operation.finally(() => this.inFlight.delete(operation)).catch(() => undefined)
+    return operation
+  }
+
+  private async performRequest(
+    message: Record<string, unknown>,
+    transfer: Transferable[] = [],
+  ): Promise<VfsReply> {
     const registration = await this.initialize()
+    return this.performRequestWithRegistration(registration, message, transfer)
+  }
+
+  private async performRequestWithRegistration(
+    registration: ServiceWorkerRegistration,
+    message: Record<string, unknown>,
+    transfer: Transferable[] = [],
+  ): Promise<VfsReply> {
     const worker = registration.active ?? registration.waiting ?? registration.installing
     if (!worker) throw new Error('Broadcast VFS worker is unavailable')
     return new Promise((resolve, reject) => {
       const channel = new MessageChannel()
-      const timeout = window.setTimeout(
-        () => reject(new Error('Broadcast VFS worker did not respond')),
-        5000,
-      )
+      const timeout = window.setTimeout(() => {
+        channel.port1.close()
+        reject(new Error('Broadcast VFS worker did not respond'))
+      }, 5000)
       channel.port1.onmessage = (event: MessageEvent<VfsReply>) => {
         window.clearTimeout(timeout)
+        channel.port1.close()
         if (event.data?.ok) resolve(event.data)
         else reject(new Error(event.data?.error || 'Broadcast VFS worker error'))
       }

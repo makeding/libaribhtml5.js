@@ -28,6 +28,7 @@ export {
   createReceiverSystemInformation,
   readReceiverInformationArray,
   RECEIVER_SYSTEM_IDENTITY,
+  synchronizeReceiverCompatibilityStorage,
 } from './runtime/system-information'
 export type {
   ReceiverSystemIdentity,

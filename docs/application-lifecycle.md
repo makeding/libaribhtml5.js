@@ -15,12 +15,24 @@
 | `KILL` | `0x04` | 対象の managed application を直ちに終了する |
 | `PREFETCH` | `0x05` | resource を取得・保持する。表示や起動は行わない |
 
-根拠は ARIB STD-B60 1.5版 10.3.3.5 の application control code と、同規格の
-`present_application_priority` / `application_priority` の規定です。
+根拠は ARIB STD-B60 1.5版 10.3.2.1 表10-8の application control code と、同規格
+10.3.3.1 の MH-application descriptor です。
 
-`AUTOSTART` は「receiver が iframe を CSS で非表示にする」という意味ではありません。
-同じ application slot へ entry document を読み込み、ページ自身が透明な bootstrap として動作します。
-表示用ページへ切り替える必要がある場合、実行中のページが
+`AUTOSTART` は起動を指示する control code であり、CSS の表示状態を指示しません。
+ユーザーへの可視性は別フィールドである MH-application descriptor の `visibility` で決まります。
+
+| visibility | receiver の動作 |
+| ---: | --- |
+| `00` | エラー報告等を除き、ユーザーと他 application の双方へ不可視 |
+| `01` | ユーザーへ不可視。他 application からは API 等を介して可視 |
+| `10` | reserved |
+| `11` | ユーザーと他 application の双方へ可視 |
+
+`00` / `01` でも document、timer、通信、EMT listener は実行を続けます。iframe を `display:none`
+にして実行を止めず、receiver compositor の application plane だけをユーザーへ合成しません。
+`11` の AUTOSTART は通常どおり画面を描画できます。
+
+別 application へ切り替える必要がある場合、実行中のページが
 `navigator.applicationManager.getOwnerApplication().replaceApplication(...)` を呼びます。
 
 ## replaceApplication
@@ -70,8 +82,9 @@ application state、resource revision、EMT listener、version deduplication は
 ## EMT は起動コマンドではない
 
 ARIB STD-B60 1.5版 11章の Event Message Table は、実行中 application の登録済み selector へ
-event message を指定時刻に配送する仕組みです。`time_mode=0` の即時配送だけでなく、UTC/NPT/相対時刻等の
-ignition time を receiver clock に従って処理します。
+event message を指定時刻に配送する仕組みです。規格には即時、UTC、NPT、相対時刻等の time mode が
+あります。現在の runtime が保証するのは即時配送 (`time_mode=0`) だけであり、その他の ignition time は
+receiver clock scheduler を実装するまで未対応です。
 
 - EMT `40/5` 等を見て host が表示ページ URL を決めない。
 - application が listener を登録する前に到着した event を、起動後に独自再生しない。
