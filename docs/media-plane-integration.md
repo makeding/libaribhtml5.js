@@ -44,8 +44,8 @@ MMT の source of truth は LCT です。実装時の優先順位は次の通り
   receiver 背景と iframe を同じ wrapper に入れると、外部映像を両者の間へ合成できない。
   application canvas を透明化する前の stage 色は receiver viewport の最背面に移し、映像領域外に
   host アプリの背景が露出しないようにする。stage 色を取得できない間の fallback は黒とする。
-- dark theme の host に light canvas の放送ページを埋め込む場合、iframe owner に
-  `color-scheme: light` を明示する。Chromium は owner と iframe 内の root で used color scheme が
+- dark theme の host に light canvas の放送ページを埋め込む場合、iframe owner と iframe 内 root に
+  `color-scheme: only light` を明示する。Chromium は owner と iframe 内の root で used color scheme が
   異なると、`html` / `body` の computed background が透明でも、不透明な scheme backdrop
   （light の場合は白）を frame canvas に描画する。これは CSS の `background`、iframe の
   `z-index`、`opacity` では除去できない。

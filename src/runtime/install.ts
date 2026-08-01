@@ -466,15 +466,40 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   })
 
   const reportStageStyle = () => {
-    const style = target.document.body
-      ? target.getComputedStyle(target.document.body)
-      : target.getComputedStyle(target.document.documentElement)
+    const body = target.document.body
+    const style = target.getComputedStyle(body ?? target.document.documentElement)
+    let backgroundColor = style.backgroundColor
+    const canvasRect = body?.getBoundingClientRect()
+    if (canvasRect && canvasRect.width > 0 && canvasRect.height > 0) {
+      const tolerance = 1
+      for (const element of target.document.querySelectorAll<HTMLElement>('body *')) {
+        const candidateStyle = target.getComputedStyle(element)
+        if (candidateStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ||
+            candidateStyle.backgroundColor === 'transparent') continue
+        const rect = element.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0 ||
+            rect.left > canvasRect.left + tolerance ||
+            rect.top > canvasRect.top + tolerance ||
+            rect.right < canvasRect.right - tolerance ||
+            rect.bottom < canvasRect.bottom - tolerance) continue
+        // Caption applications commonly put the real black stage in a
+        // full-canvas #backscreen while leaving body white. Preserve that
+        // stage below the external video before the media hole clears it.
+        backgroundColor = candidateStyle.backgroundColor
+        break
+      }
+    }
     postRuntime('stage-style', {
-      backgroundColor: style.backgroundColor,
+      backgroundColor,
     })
   }
   const prepareExternalMediaPlaneCanvas = () => {
     if (options.mediaPlaneAdapter?.renderMode !== 'external') return
+    // Chromium paints an opaque iframe canvas when the used color scheme of
+    // the owner iframe and this document root differ. Broadcast applications
+    // predate page color-scheme negotiation, so pin the child side to the
+    // receiver's light canvas instead of inheriting the host's dark preference.
+    target.document.documentElement.style.setProperty('color-scheme', 'only light', 'important')
     target.document.documentElement.style.setProperty('background', 'transparent', 'important')
     if (target.document.body) {
       target.document.body.style.setProperty('background', 'transparent', 'important')
@@ -631,7 +656,11 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     for (const element of target.document.querySelectorAll<HTMLElement>('body *')) {
       if (element === object || element.contains(object) || object.contains(element)) continue
       const style = target.getComputedStyle(element)
-      if ((style.backgroundColor === 'rgba(0, 0, 0, 0)' ||
+      // A background cleared by this runtime is now computed as transparent.
+      // Keep tracking it while it still covers the media slot; otherwise the
+      // next observer pass would restore it, then clear it again forever.
+      if (!externalBackgrounds.has(element) &&
+          (style.backgroundColor === 'rgba(0, 0, 0, 0)' ||
            style.backgroundColor === 'transparent') &&
           style.backgroundImage === 'none') continue
       // Only the background paint is removed. Text, controls and transparent
