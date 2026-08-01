@@ -37,8 +37,12 @@ MMT の source of truth は LCT です。実装時の優先順位は次の通り
 - 背景プレーンは viewport 全体を覆い、映像、アプリケーション、字幕、文字スーパーより後ろに置く。
 - LCT の色はアプリケーションやサービスの切り替え時に引き継がない。新しい LCT を受け取るまでは
   fallback に戻す。
-- アプリケーションの `html` / `body` を透明化して映像を見せる場合でも、透明部分の下には
-  receiver-owned background plane を残す。
+- `in-object` adapter では、runtime はアプリケーションの `html` / `body` を透明化しない。
+  放送アプリケーションが指定した背景色や背景画像は multimedia plane の描画として保持する。
+- `external` adapter では、外部映像面を iframe 越しに見せるため application canvas を透明化する。
+  その場合は receiver 背景、外部映像、iframe を別々の sibling layer として、この順に重ねる。
+  receiver 背景と iframe を同じ wrapper に入れると、外部映像を両者の間へ合成できない。
+- 映像の位置と寸法は、どちらの adapter でも放送アプリケーションが宣言した video object に従う。
 - 放送アプリケーション内の背景画像、要素背景、半透明 UI は multimedia plane の描画であり、
   LCT の背景色を置き換えない。
 - native compositor でも DOM 実装でも、LCT の単色を iframe 内の装飾要素として実装しない。

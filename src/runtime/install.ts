@@ -454,12 +454,6 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     },
   })
 
-  const makeTransparent = () => {
-    target.document.documentElement.style.setProperty('background', 'transparent', 'important')
-    if (target.document.body) {
-      target.document.body.style.setProperty('background', 'transparent', 'important')
-    }
-  }
   const reportStageStyle = () => {
     const style = target.document.body
       ? target.getComputedStyle(target.document.body)
@@ -467,6 +461,13 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     postRuntime('stage-style', {
       backgroundColor: style.backgroundColor,
     })
+  }
+  const prepareExternalMediaPlaneCanvas = () => {
+    if (options.mediaPlaneAdapter?.renderMode !== 'external') return
+    target.document.documentElement.style.setProperty('background', 'transparent', 'important')
+    if (target.document.body) {
+      target.document.body.style.setProperty('background', 'transparent', 'important')
+    }
   }
   const mediaPlaneAdapter = options.mediaPlaneAdapter
   const mediaObjectIds = new WeakMap<HTMLElement, string>()
@@ -651,7 +652,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   const startDocumentRuntime = () => {
     installNavigationPolicy()
     reportStageStyle()
-    makeTransparent()
+    prepareExternalMediaPlaneCanvas()
     reportMediaPlane()
   }
 

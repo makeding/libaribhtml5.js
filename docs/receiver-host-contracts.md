@@ -81,12 +81,17 @@ const host = new AribReceiverHost({
   viewport,
   onStatus: text => statusLabel.textContent = text,
   onLifecycle(event) {
-    if (event.type === 'installed') clearApplicationTimeout()
-    if (event.type === 'navigating') armApplicationTimeout()
     if (event.type === 'error') reportRuntimeError(event.message)
   },
 })
 ```
+
+`loadApplication()` とアプリケーション内遷移で読み込まれた文書が receiver runtime を
+導入しなかった場合は、iframe の `load` 直後に `about:blank` へ戻し、media plane を
+通常視聴状態へ復元して `error`、`exited` の順に通知します。これにより VFS の未命中や
+通常の 404 文書を画面へ残しません。文書の `load` 自体が発生しない要求には既定 5 秒の
+watchdog を適用します。待機時間は `applicationLoadTimeoutMs` で変更でき、`0` を指定した
+場合は watchdog だけを無効化します。
 
 Lifecycle event types are `loading`, `installed`, `navigating`, `exited`,
 `navigation-blocked`, `frame-blocked`, and `error`.

@@ -73,6 +73,8 @@ export type AribReceiverHostOptions = {
   onStatus?: (status: string) => void
   /** Machine-readable application/runtime lifecycle; never branch on onStatus text. */
   onLifecycle?: (event: AribReceiverLifecycleEvent) => void
+  /** Time to wait for a loaded document to install the receiver runtime. 0 disables the fallback. */
+  applicationLoadTimeoutMs?: number
   onUrlChange?: (url: string) => void
   onMediaPlane?: (plane: AribMediaPlane) => void
   /** @deprecated Use onMediaPlane. */
@@ -109,6 +111,7 @@ export class AribReceiverHost {
   private readonly origin: string
   private readonly onStatus?: (status: string) => void
   private readonly onLifecycle?: (event: AribReceiverLifecycleEvent) => void
+  private readonly applicationLoadTimeoutMs: number
   private readonly onUrlChange?: (url: string) => void
   private readonly onMediaPlane?: (plane: AribMediaPlane) => void
   private readonly onVideoPlane?: (plane: AribMediaPlane) => void
@@ -131,6 +134,7 @@ export class AribReceiverHost {
   private video: HTMLVideoElement | null = null
   private mediaPlaneEnabled = false
   private applicationExited = false
+  private applicationLoadTimer: number | null = null
   private destroyed = false
 
   constructor(options: AribReceiverHostOptions) {
@@ -141,6 +145,10 @@ export class AribReceiverHost {
     this.origin = this.ownerWindow.location.origin
     this.onStatus = options.onStatus
     this.onLifecycle = options.onLifecycle
+    this.applicationLoadTimeoutMs = options.applicationLoadTimeoutMs ?? 5000
+    if (!Number.isFinite(this.applicationLoadTimeoutMs) || this.applicationLoadTimeoutMs < 0) {
+      throw new TypeError('applicationLoadTimeoutMs must be a finite non-negative number')
+    }
     this.onUrlChange = options.onUrlChange
     this.onMediaPlane = options.onMediaPlane
     this.onVideoPlane = options.onVideoPlane
@@ -233,6 +241,7 @@ export class AribReceiverHost {
     this.onLifecycle?.({ type: 'loading', url: resolved.href })
     resolved.searchParams.set('runtime', Date.now().toString())
     this.iframe.src = resolved.href
+    this.armApplicationLoadTimer(resolved.href)
   }
 
   /** Leave data-broadcast mode and restore media to the ordinary player. */
@@ -240,6 +249,7 @@ export class AribReceiverHost {
     this.assertAlive()
     if (this.applicationExited) return
     this.applicationExited = true
+    this.clearApplicationLoadTimer()
     this.invalidateRuntime('application-exit')
     this.iframe.style.display = 'none'
     this.iframe.src = 'about:blank'
@@ -369,6 +379,7 @@ export class AribReceiverHost {
     this.ownerWindow.removeEventListener('message', this.handleRuntimeMessage)
     this.iframe.removeEventListener('load', this.handleFrameLoad)
     this.resizeObserver.disconnect()
+    this.clearApplicationLoadTimer()
     this.invalidateRuntime('host-destroy')
     this.video = null
   }
@@ -376,13 +387,32 @@ export class AribReceiverHost {
   private readonly handleFrameLoad = (): void => {
     if (this.applicationExited) return
     try {
-      if (this.iframe.contentWindow?.location.origin === this.origin) return
+      const location = this.iframe.contentWindow?.location
+      if (!location || location.href === 'about:blank') return
+      if (location?.origin === this.origin) {
+        const loadedUrl = location.href
+        // The injected bootstrap runs while the document is parsed. Let its
+        // queued postMessage run first, then reject a loaded 404/error document
+        // immediately instead of leaving it visible until the watchdog fires.
+        this.ownerWindow.setTimeout(() => {
+          if (this.destroyed || this.applicationExited || this.activeRuntimeId) return
+          try {
+            if (this.iframe.contentWindow?.location.href !== loadedUrl) return
+          } catch {
+            return
+          }
+          this.failApplicationLoad(loadedUrl)
+        }, 0)
+        return
+      }
     } catch {
       // A cross-origin page cannot participate in this receiver session.
     }
+    this.clearApplicationLoadTimer()
     this.invalidateRuntime('document-unload')
     this.onStatus?.('通信ページをブロックしました')
     this.onLifecycle?.({ type: 'frame-blocked', url: this.iframe.src })
+    this.exitApplication('通信ページをブロックしました')
   }
 
   private readonly reportProgramGuideUnavailable = (
@@ -405,6 +435,7 @@ export class AribReceiverHost {
     if (message?.type !== 'arib-runtime' || typeof message.runtimeId !== 'string') return
 
     if (message.event === 'installed') {
+      this.clearApplicationLoadTimer()
       this.activeRuntimeId = message.runtimeId
       this.onUrlChange?.(String(message.url ?? ''))
       this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
@@ -424,6 +455,7 @@ export class AribReceiverHost {
         this.invalidateRuntime('document-unload')
         this.onStatus?.('ページ遷移中')
         this.onLifecycle?.({ type: 'navigating', url: String(message.url ?? '') })
+        this.armApplicationLoadTimer(String(message.url ?? this.iframe.src))
         return
       case 'navigation-blocked':
         this.onStatus?.('外部URLをブロックしました')
@@ -515,6 +547,30 @@ export class AribReceiverHost {
       event,
       ...detail,
     }, this.origin)
+  }
+
+  private armApplicationLoadTimer(url: string): void {
+    this.clearApplicationLoadTimer()
+    if (this.applicationLoadTimeoutMs === 0) return
+    this.applicationLoadTimer = this.ownerWindow.setTimeout(() => {
+      this.applicationLoadTimer = null
+      if (this.destroyed || this.applicationExited || this.activeRuntimeId) return
+      this.failApplicationLoad(url)
+    }, this.applicationLoadTimeoutMs)
+  }
+
+  private failApplicationLoad(url: string): void {
+    if (this.destroyed || this.applicationExited || this.activeRuntimeId) return
+    this.clearApplicationLoadTimer()
+    const message = `データ放送ページにランタイムを導入できませんでした: ${url}`
+    this.onLifecycle?.({ type: 'error', message })
+    this.exitApplication('データ放送ページを読み込めませんでした')
+  }
+
+  private clearApplicationLoadTimer(): void {
+    if (this.applicationLoadTimer === null) return
+    this.ownerWindow.clearTimeout(this.applicationLoadTimer)
+    this.applicationLoadTimer = null
   }
 
   private invalidateRuntime(reason: AribMediaPlaneUnmountReason): void {
