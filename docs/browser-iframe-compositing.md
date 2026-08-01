@@ -19,10 +19,16 @@ media object の矩形へ移動・リサイズして使います。video を ifr
 ダイアログ、字幕ボタンなど本来映像より前にある application UI まで隠れるため禁止です。
 
 iframe 内の `object[type="video/x-arib2-broadcast"]` は映像そのものではなく、外部 video plane の
-位置・寸法・可視状態を宣言する geometry anchor として残します。external adapter は object の描画だけを
-`opacity: 0 !important` で隠します。`display: none`、`visibility: hidden`、`content-visibility: hidden` は
-矩形計測または可視判定を壊すため使用しません。host 側の video は object の CSS を複製せず、runtime が
-報告した `getBoundingClientRect()` を logical viewport に対する割合へ変換して配置します。
+位置・寸法・可視状態を宣言する geometry anchor として残します。external adapter は object の描画を
+`opacity: 0 !important` で隠します。さらに `#vstream > object#av` のように、object と同じ矩形で
+object だけを子に持つ media-only wrapper は wrapper 自身も隠します。wrapper が高い `z-index` の
+独立した compositing layer を作る場合、背景だけを透明化しても Chromium が外部 video の上へその layer を
+残すためです。字幕、ダイアログ、操作 UI を含む祖先は media-only wrapper として扱いません。
+
+`display: none`、`visibility: hidden`、`content-visibility: hidden` は矩形計測または可視判定を壊すため
+使用しません。runtime は隠す前の computed opacity を media-plane report に使い、host 側の video は
+object の CSS を複製せず、報告された `getBoundingClientRect()` を logical viewport に対する割合へ
+変換して配置します。
 
 ## Chromium の白い iframe backdrop
 

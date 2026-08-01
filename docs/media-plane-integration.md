@@ -53,6 +53,9 @@ MMT の source of truth は LCT です。実装時の優先順位は次の通り
   背景だけを media object の存続中に透明化する。兄弟要素の UI は変更しない。video を iframe
   より前へ上げて穴を作ってはならない。そうすると字幕説明など、映像より前にあるべき
   application UI まで隠れる。
+- `#vstream > object#av` のように media object と同じ矩形で object だけを子に持つ wrapper は、
+  背景だけでなく wrapper 自身を `opacity: 0` にする。高い `z-index` の純 media wrapper が作る
+  空の compositing layer を残さないためであり、字幕や操作 UI を含む wrapper には適用しない。
 - 映像の位置と寸法は、どちらの adapter でも放送アプリケーションが宣言した video object に従う。
 - 放送アプリケーション内の背景画像、要素背景、半透明 UI は multimedia plane の描画であり、
   LCT の背景色を置き換えない。
@@ -280,6 +283,9 @@ iframe 内の背景 < 映像 < iframe 内の字幕説明ボタン
 
 D Data の字幕コンテンツはアプリケーション DOM です。`setCaptionTracks()` と
 `pushCaption()` で iframe へ渡し、通常の放送字幕として親側へ二重描画しないでください。
+アプリケーションが `addCaptionListener()` を登録している間は
+`onCaptionSubscription` に要求中の component tag が通知されます。ネイティブ受信機は
+この通知を使い、同じ字幕を通常の字幕 renderer で二重表示しないようにできます。
 
 ---
 

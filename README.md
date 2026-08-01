@@ -54,6 +54,9 @@ pnpm build:sdk
 `color-scheme` backdrop と external media hole の実装条件をまとめています。
 データ放送へ入る時は `host.loadApplication()`、通常プレーヤーへ戻す時は
 `host.exitApplication()` を使用します。
+MH-AIT の `AUTOSTART` / `PRESENT` / `KILL`、紅白等の連動 application、
+`replaceApplication()` と EMT の責務境界は
+[MH-AIT アプリケーションライフサイクル](docs/application-lifecycle.md)を参照してください。
 
 録画再生ではシステム時計ではなく、ストリームの NTP と再生位置を
 `host.setBroadcastClock()` へ渡します。変換例は
@@ -124,3 +127,5 @@ See [Android program-guide integration](docs/android-program-guide.md) for handi
 future-program result to a receiver-owned WebView/native EPG with a browser fallback.
 See [receiver host contracts](docs/receiver-host-contracts.md) for program metadata
 and receiver-owned system information.
+See [MH-AIT application lifecycle](docs/application-lifecycle.md) for AUTOSTART,
+PRESENT, KILL, `replaceApplication()`, and the EMT delivery boundary.

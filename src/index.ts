@@ -1,7 +1,11 @@
 export { AribReceiverHost } from './receiver-host'
 export type {
+  AribApplicationInformation,
+  AribApplicationReplaceHandler,
+  AribApplicationReplaceRequest,
   AribCaptionPacket,
   AribBroadcastClock,
+  AribExitManagedStateHandler,
   AribReceiverLifecycleEvent,
   AribReceiverHostOptions,
 } from './receiver-host'
@@ -39,6 +43,7 @@ export type {
   RuntimeEventSource,
 } from './runtime/stream-event'
 export type {
+  RuntimeApplicationInformation,
   RuntimeOptions,
   RuntimeWindow,
 } from './runtime/install'

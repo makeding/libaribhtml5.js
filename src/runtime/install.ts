@@ -57,6 +57,16 @@ export type RuntimeOptions = {
   systemInformation?: ReceiverSystemInformationOverrides
   /** Resolve receiver/CAS identifiers by receiverDevice identifier kind. */
   getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
+  /** MH-AIT metadata for the application which owns this document. */
+  application?: RuntimeApplicationInformation
+}
+
+export type RuntimeApplicationInformation = {
+  type?: string
+  organizationId?: number
+  applicationId?: number
+  controlCode?: string
+  autostartPriority?: number
 }
 
 type CaptionListener = (data: string) => void
@@ -220,6 +230,11 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     const value = source.match(/\/([0-9a-f]{4})(?:[?#]|$)/i)?.[1]
     return value === undefined ? null : Number.parseInt(value, 16)
   }
+  const reportCaptionSubscriptions = () => {
+    postRuntime('caption-subscription', {
+      componentTags: [...new Set(captionListeners.values())],
+    })
+  }
   const installBroadcastObjectApi = (object: BroadcastObject) => {
     if (typeof object.isCaptionExistent !== 'function') {
       object.isCaptionExistent = (source: string) => {
@@ -232,11 +247,16 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         const componentTag = captionComponentTag(source)
         if (typeof listener !== 'function' || componentTag === null) return false
         captionListeners.set(listener, componentTag)
+        reportCaptionSubscriptions()
         return true
       }
     }
     if (typeof object.removeCaptionListener !== 'function') {
-      object.removeCaptionListener = (listener: CaptionListener) => captionListeners.delete(listener)
+      object.removeCaptionListener = (listener: CaptionListener) => {
+        const removed = captionListeners.delete(listener)
+        if (removed) reportCaptionSubscriptions()
+        return removed
+      }
     }
   }
 
@@ -254,6 +274,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     if (event.data.event === 'caption-reset') {
       captionTracks.clear()
       captionListeners.clear()
+      reportCaptionSubscriptions()
       return
     }
     if (event.data.event === 'caption-data') {
@@ -350,6 +371,11 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   }
 
   const ownerApplication = {
+    type: options.application?.type ?? '',
+    organization_id: options.application?.organizationId ?? 0,
+    application_id: options.application?.applicationId ?? 0,
+    control_code: options.application?.controlCode ?? '',
+    autostart_priority: options.application?.autostartPriority ?? 0,
     keySet,
     show: () => true,
     hide: () => true,
@@ -366,6 +392,25 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     },
     destroyApplication: () => {
       postRuntime('destroy')
+    },
+    replaceApplication: (
+      organizationId: number,
+      applicationId: number,
+      aitUrl: string | null = null,
+    ) => {
+      if (!Number.isSafeInteger(organizationId) || organizationId < 0 ||
+          !Number.isSafeInteger(applicationId) || applicationId < 0) {
+        postRuntime('error', { message: 'Invalid replaceApplication application identifier' })
+        return
+      }
+      postRuntime('replace-application', {
+        organizationId,
+        applicationId,
+        aitUrl: aitUrl === null ? null : String(aitUrl),
+      })
+    },
+    exitFromManagedState: (url: string) => {
+      postRuntime('exit-managed-state', { url: String(url ?? '') })
     },
   }
 
@@ -507,7 +552,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   }
   const mediaPlaneAdapter = options.mediaPlaneAdapter
   const mediaObjectIds = new WeakMap<HTMLElement, string>()
-  const externalObjectOpacity = new WeakMap<HTMLElement, {
+  const externalPlaceholderOpacities = new Map<HTMLElement, {
     value: string
     priority: string
     computed: number
@@ -575,33 +620,67 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         zIndex: style.zIndex,
         display: style.display,
         visibility: style.visibility,
-        opacity: externalObjectOpacity.get(element)?.computed ?? Number(style.opacity),
+        opacity: externalPlaceholderOpacities.get(element)?.computed ?? Number(style.opacity),
         transform: style.transform,
       })
       element = element.parentElement
     }
     return path.reverse()
   }
+  const externalPlaceholderElements = (object: HTMLElement): HTMLElement[] => {
+    const elements = [object]
+    const objectRect = object.getBoundingClientRect()
+    const tolerance = 1
+    let child = object
+    for (let parent = object.parentElement;
+      parent && parent !== target.document.body &&
+      parent !== target.document.documentElement;
+      parent = parent.parentElement) {
+      const rect = parent.getBoundingClientRect()
+      const isMediaOnlyWrapper = parent.children.length === 1 &&
+        parent.firstElementChild === child &&
+        Math.abs(rect.left - objectRect.left) <= tolerance &&
+        Math.abs(rect.top - objectRect.top) <= tolerance &&
+        Math.abs(rect.width - objectRect.width) <= tolerance &&
+        Math.abs(rect.height - objectRect.height) <= tolerance
+      if (!isMediaOnlyWrapper) break
+      elements.push(parent)
+      child = parent
+    }
+    return elements
+  }
+  const restoreExternalPlaceholder = (element: HTMLElement) => {
+    const original = externalPlaceholderOpacities.get(element)
+    if (!original) return
+    if (original.value) element.style.setProperty('opacity', original.value, original.priority)
+    else element.style.removeProperty('opacity')
+    externalPlaceholderOpacities.delete(element)
+  }
   const setExternalPlaceholder = (object: HTMLElement, enabled: boolean) => {
-    if (enabled) {
-      if (!externalObjectOpacity.has(object)) {
-        externalObjectOpacity.set(object, {
-          value: object.style.getPropertyValue('opacity'),
-          priority: object.style.getPropertyPriority('opacity'),
-          computed: Number(target.getComputedStyle(object).opacity),
-        })
-      }
-      if (object.style.getPropertyValue('opacity') !== '0' ||
-          object.style.getPropertyPriority('opacity') !== 'important') {
-        object.style.setProperty('opacity', '0', 'important')
+    if (!enabled) {
+      for (const element of [...externalPlaceholderOpacities.keys()]) {
+        restoreExternalPlaceholder(element)
       }
       return
     }
-    const original = externalObjectOpacity.get(object)
-    if (!original) return
-    if (original.value) object.style.setProperty('opacity', original.value, original.priority)
-    else object.style.removeProperty('opacity')
-    externalObjectOpacity.delete(object)
+
+    const desired = new Set(externalPlaceholderElements(object))
+    for (const element of [...externalPlaceholderOpacities.keys()]) {
+      if (!desired.has(element)) restoreExternalPlaceholder(element)
+    }
+    for (const element of desired) {
+      if (!externalPlaceholderOpacities.has(element)) {
+        externalPlaceholderOpacities.set(element, {
+          value: element.style.getPropertyValue('opacity'),
+          priority: element.style.getPropertyPriority('opacity'),
+          computed: Number(target.getComputedStyle(element).opacity),
+        })
+      }
+      if (element.style.getPropertyValue('opacity') !== '0' ||
+          element.style.getPropertyPriority('opacity') !== 'important') {
+        element.style.setProperty('opacity', '0', 'important')
+      }
+    }
   }
   const restoreExternalBackground = (element: HTMLElement) => {
     const original = externalBackgrounds.get(element)
@@ -775,9 +854,22 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   }
   const startDocumentRuntime = () => {
     installNavigationPolicy()
-    reportStageStyle()
-    prepareExternalMediaPlaneCanvas()
-    reportMediaPlane()
+    // Static broadcast objects must have their receiver API before later
+    // DOMContentLoaded/ready listeners call isCaptionExistent(), but the
+    // application's ready handler may still add its BS4K/BS8K theme class.
+    // Defer stage sampling until the current event dispatch has completed so
+    // the receiver does not publish the page's transient default (usually
+    // white) and then expose it around a dark BS8K media slot.
+    const object = target.document.querySelector<HTMLElement>(
+      'object[type="video/x-arib2-broadcast"], ' +
+      'object[data-arib-type="video/x-arib2-broadcast"]',
+    )
+    if (object) installBroadcastObjectApi(object as BroadcastObject)
+    queueMicrotask(() => {
+      reportStageStyle()
+      prepareExternalMediaPlaneCanvas()
+      reportMediaPlane()
+    })
   }
 
   // Establish the host session before observing the parser.  A broadcast

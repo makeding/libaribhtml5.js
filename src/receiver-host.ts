@@ -1,5 +1,6 @@
 import {
   installRuntime,
+  type RuntimeApplicationInformation,
   type RuntimeEvent,
   type RuntimeWindow,
 } from './runtime/install'
@@ -46,6 +47,24 @@ export type AribCaptionPacket = {
   data?: string
 }
 
+export type AribCaptionSubscription = {
+  componentTags: number[]
+}
+
+export type AribApplicationInformation = RuntimeApplicationInformation
+
+export type AribApplicationReplaceRequest = {
+  organizationId: number
+  applicationId: number
+  aitUrl: string | null
+}
+
+export type AribApplicationReplaceHandler = (
+  request: AribApplicationReplaceRequest,
+) => void | Promise<void>
+
+export type AribExitManagedStateHandler = (url: string) => void | Promise<void>
+
 export type AribBroadcastClock = {
   /** Absolute broadcast time at the anchor, as Unix epoch milliseconds. */
   epochMilliseconds: number
@@ -88,6 +107,12 @@ export type AribReceiverHostOptions = {
   resourceStore?: BroadcastResourceStore
   /** Receiver/WebView bridge which opens the native EPG or a program detail page. */
   onOpenProgramGuide?: AribProgramGuideHandler
+  /** Active caption components requested by the current broadcast document. */
+  onCaptionSubscription?: (subscription: AribCaptionSubscription) => void
+  /** Resolve Application.replaceApplication() through the receiver's current MH-AIT. */
+  onReplaceApplication?: AribApplicationReplaceHandler
+  /** Transfer an application to an unmanaged general-application URL. */
+  onExitManagedState?: AribExitManagedStateHandler
   /** Override the default browser alert when the receiver cannot open the EPG. */
   onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   /** Receiver identity/capabilities exposed to the broadcast application. */
@@ -121,6 +146,9 @@ export class AribReceiverHost {
   private readonly broadcastBaseUrl: URL
   private readonly resourceStore?: BroadcastResourceStore
   private readonly onOpenProgramGuide?: AribProgramGuideHandler
+  private readonly onCaptionSubscription?: (subscription: AribCaptionSubscription) => void
+  private readonly onReplaceApplication?: AribApplicationReplaceHandler
+  private readonly onExitManagedState?: AribExitManagedStateHandler
   private readonly onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   private readonly systemInformation?: ReceiverSystemInformationOverrides
   private readonly getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
@@ -129,6 +157,7 @@ export class AribReceiverHost {
   private logicalWidth = 3840
   private logicalHeight = 2160
   private captionComponentTags: number[] = []
+  private applicationInformation: AribApplicationInformation = {}
   private programInfo: ProgramInfo | null = null
   private readonly pendingStreamEvents: RuntimeEvent[] = []
   private broadcastClock: (AribBroadcastClock & { monotonicMilliseconds: number }) | null = null
@@ -190,6 +219,9 @@ export class AribReceiverHost {
     }
     this.resourceStore = options.resourceStore
     this.onOpenProgramGuide = options.onOpenProgramGuide
+    this.onCaptionSubscription = options.onCaptionSubscription
+    this.onReplaceApplication = options.onReplaceApplication
+    this.onExitManagedState = options.onExitManagedState
     this.onProgramGuideUnavailable = options.onProgramGuideUnavailable
     this.systemInformation = options.systemInformation
     this.getDeviceIdentifier = options.getDeviceIdentifier
@@ -211,7 +243,14 @@ export class AribReceiverHost {
       now: () => this.getBroadcastTime(),
       systemInformation: this.systemInformation,
       getDeviceIdentifier: this.getDeviceIdentifier,
+      application: this.applicationInformation,
     })
+  }
+
+  /** Set the MH-AIT identity exposed by applicationManager.getOwnerApplication(). */
+  setApplicationInformation(application: AribApplicationInformation | null): void {
+    this.assertAlive()
+    this.applicationInformation = application ? { ...application } : {}
   }
 
   /** @deprecated Pass an AribMediaPlaneAdapter to the constructor. */
@@ -490,6 +529,52 @@ export class AribReceiverHost {
       case 'video-plane':
         this.applyMediaPlane(message)
         return
+      case 'caption-subscription': {
+        const componentTags = Array.isArray(message.componentTags)
+          ? [...new Set(message.componentTags
+              .map(Number)
+              .filter(value => Number.isInteger(value) && value >= 0 && value <= 0xffff))]
+          : []
+        this.onCaptionSubscription?.({ componentTags })
+        return
+      }
+      case 'replace-application': {
+        const organizationId = Number(message.organizationId)
+        const applicationId = Number(message.applicationId)
+        const request: AribApplicationReplaceRequest = {
+          organizationId,
+          applicationId,
+          aitUrl: message.aitUrl === null || message.aitUrl === undefined
+            ? null
+            : String(message.aitUrl),
+        }
+        if (!Number.isSafeInteger(organizationId) || organizationId < 0 ||
+            !Number.isSafeInteger(applicationId) || applicationId < 0) {
+          this.onStatus?.('不正なアプリケーション切替要求を拒否しました')
+          return
+        }
+        if (!this.onReplaceApplication) {
+          this.onStatus?.('アプリケーション切替に対応していません')
+          return
+        }
+        void Promise.resolve(this.onReplaceApplication(request)).catch(error => {
+          this.onStatus?.(`アプリケーション切替エラー：${String(error)}`)
+          this.onLifecycle?.({ type: 'error', message: String(error) })
+        })
+        return
+      }
+      case 'exit-managed-state': {
+        const url = String(message.url ?? '')
+        if (!this.onExitManagedState) {
+          this.onStatus?.('管理外アプリケーションへの遷移に対応していません')
+          return
+        }
+        void Promise.resolve(this.onExitManagedState(url)).catch(error => {
+          this.onStatus?.(`管理外アプリケーション遷移エラー：${String(error)}`)
+          this.onLifecycle?.({ type: 'error', message: String(error) })
+        })
+        return
+      }
       case 'destroy':
         this.exitApplication('アプリケーション終了')
         return
@@ -590,6 +675,7 @@ export class AribReceiverHost {
   private invalidateRuntime(reason: AribMediaPlaneUnmountReason): void {
     this.activeRuntimeId = null
     this.mediaPlaneEnabled = false
+    this.onCaptionSubscription?.({ componentTags: [] })
     this.mediaPlaneAdapter?.unmountMediaPlane(reason)
   }
 
