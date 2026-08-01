@@ -25,6 +25,12 @@ object だけを子に持つ media-only wrapper は wrapper 自身も隠しま�
 独立した compositing layer を作る場合、背景だけを透明化しても Chromium が外部 video の上へその layer を
 残すためです。字幕、ダイアログ、操作 UI を含む祖先は media-only wrapper として扱いません。
 
+放送ページが object 自身に `width` / `height` を指定せず、positioned wrapper だけに映像枠の寸法を
+指定する場合があります。通常ブラウザはその object を 300 x 150 の既定 replaced-element として計測しますが、
+receiver runtime は object が wrapper の唯一の子である場合に限り wrapper を media slot として採用します。
+この wrapper は外部合成中だけ object と一緒に透明化されるため、放送ページが指定した高い `z-index` を
+削除したり、host の video を iframe より前へ出したりする必要はありません。
+
 `display: none`、`visibility: hidden`、`content-visibility: hidden` は矩形計測または可視判定を壊すため
 使用しません。runtime は隠す前の computed opacity を media-plane report に使い、host 側の video は
 object の CSS を複製せず、報告された `getBoundingClientRect()` を logical viewport に対する割合へ

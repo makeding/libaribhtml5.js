@@ -6,6 +6,7 @@ import type {
   AribMediaPlaneAdapter,
   AribMediaPlaneStackEntry,
 } from '../media-plane'
+import { resolveBroadcastMediaSlot } from './media-slot'
 import {
   deriveBroadcastRootUrl,
   normalizeBroadcastBaseUrl,
@@ -632,7 +633,8 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   }
   const externalPlaceholderElements = (object: HTMLElement): HTMLElement[] => {
     const elements = [object]
-    const objectRect = object.getBoundingClientRect()
+    const slot = resolveBroadcastMediaSlot(object)
+    const objectRect = slot.rect
     const tolerance = 1
     let child = object
     for (let parent = object.parentElement;
@@ -642,10 +644,12 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       const rect = parent.getBoundingClientRect()
       const isMediaOnlyWrapper = parent.children.length === 1 &&
         parent.firstElementChild === child &&
-        Math.abs(rect.left - objectRect.left) <= tolerance &&
-        Math.abs(rect.top - objectRect.top) <= tolerance &&
-        Math.abs(rect.width - objectRect.width) <= tolerance &&
-        Math.abs(rect.height - objectRect.height) <= tolerance
+        (parent === slot.element || (
+          Math.abs(rect.left - objectRect.left) <= tolerance &&
+          Math.abs(rect.top - objectRect.top) <= tolerance &&
+          Math.abs(rect.width - objectRect.width) <= tolerance &&
+          Math.abs(rect.height - objectRect.height) <= tolerance
+        ))
       if (!isMediaOnlyWrapper) break
       elements.push(parent)
       child = parent
@@ -725,7 +729,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
           style.backgroundImage === 'none') continue
       desired.add(element)
     }
-    const objectRect = object.getBoundingClientRect()
+    const objectRect = resolveBroadcastMediaSlot(object).rect
     const coversMediaSlot = (element: HTMLElement) => {
       const rect = element.getBoundingClientRect()
       const tolerance = 1
@@ -825,7 +829,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
     observeMediaObject(object)
     installBroadcastObjectApi(object as BroadcastObject)
-    const rect = object.getBoundingClientRect()
+    const rect = resolveBroadcastMediaSlot(object).rect
     const style = target.getComputedStyle(object)
     const videoSource = object.querySelector<HTMLParamElement>('param[name="video_src"]')?.value
     const audioSource = object.querySelector<HTMLParamElement>('param[name="audio_src"]')?.value
