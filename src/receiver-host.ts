@@ -442,6 +442,10 @@ export class AribReceiverHost {
 
   private readonly handleFrameLoad = (): void => {
     if (this.applicationExited) return
+    // Navigation keeps the iframe element, but a same-origin application may
+    // have touched frameElement while its previous document was active.
+    // Reassert the display-only input contract before accepting the new page.
+    makeIframePointerTransparent(this.iframe)
     try {
       const location = this.iframe.contentWindow?.location
       if (!location || location.href === 'about:blank') return

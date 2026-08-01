@@ -107,11 +107,21 @@ externalAdapter.updateMediaPlane(null, {
 assert.equal(externalSurface.style.zIndex, '2')
 
 const receiverIframe = {
-  style: {},
+  inert: false,
+  style: {
+    values: {},
+    priorities: {},
+    setProperty(property, value, priority = '') {
+      this.values[property] = value
+      this.priorities[property] = priority
+    },
+  },
   tabIndex: 0,
 }
 makeIframePointerTransparent(receiverIframe)
-assert.equal(receiverIframe.style.pointerEvents, 'none')
+assert.equal(receiverIframe.inert, true)
+assert.equal(receiverIframe.style.values['pointer-events'], 'none')
+assert.equal(receiverIframe.style.priorities['pointer-events'], 'important')
 assert.equal(receiverIframe.tabIndex, -1)
 assert.equal(shouldSuppressRomSoundPlayback({
   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)',

@@ -48,10 +48,16 @@ object の CSS を複製せず、報告された `getBoundingClientRect()` を l
 データ放送 iframe は全面が透明でも、一つの不透明な矩形と同じように hit test されます。そのまま
 プレーヤーへ重ねると、特に touch device で下の再生 UI がクリックできなくなります。
 
-`AribReceiverHost` は iframe を表示専用の application plane として扱い、既定で
-`pointer-events: none` と `tabindex="-1"` を設定します。描画、timer、通信、media-plane report は
-継続し、pointer event だけが下のプレーヤーへ通過します。リモコン入力は iframe の focus に頼らず
-`host.dispatchKey()` で document へ送ってください。
+`AribReceiverHost` は iframe を表示専用の application plane として扱い、既定で `inert`、
+`pointer-events: none !important`、`tabindex="-1"` を設定します。`tabindex="-1"` だけでは iframe 内の
+document が focus を取得できるため不十分です。`inert` によって子 document 全体を focus と hit test の
+対象から外し、下のプレーヤー container へ mouse / touch event と `:hover` を渡します。描画、timer、通信、
+media-plane report は継続します。リモコン入力は iframe の focus に頼らず `host.dispatchKey()` で
+document へ送ってください。
+
+iframe 内の pointer event を親へ再送する実装は使いません。iframe の event は親 document へ bubble
+しないため、再送には座標から対象要素を再決定する処理が必要になり、player controller の click、drag、
+pointer capture を壊します。
 
 HTML/iframe には SVG の `pointer-events: painted` に相当する、非透明 pixel だけを hit test する
 モードはありません。透明度や root の背景色を見て iframe を `display: none` にすると、debug overlay
