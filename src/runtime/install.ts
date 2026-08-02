@@ -295,6 +295,21 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   }
 
   let applyApplicationInformation: (value: RuntimeApplicationInformation) => void = () => {}
+  let applicationVisible = true
+  let applicationInputActive = false
+  const applyApplicationVisibility = () => {
+    target.document.documentElement.style.setProperty(
+      'visibility',
+      applicationVisible ? 'visible' : 'hidden',
+      'important',
+    )
+  }
+  const reportApplicationPresentation = () => {
+    postRuntime('application-presentation', {
+      visible: applicationVisible,
+      inputActive: applicationInputActive,
+    })
+  }
   target.addEventListener('message', (event) => {
     if (event.source !== target.parent || event.origin !== target.location.origin) return
     if (event.data?.type !== 'arib-host' || event.data.runtimeId !== runtimeId) return
@@ -344,6 +359,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       } catch (error) {
         postRuntime('error', { message: `Invalid application information: ${String(error)}` })
       }
+      return
+    }
+    if (event.data.event === 'receiver-input-state') {
+      applicationInputActive = Boolean(event.data.active)
       return
     }
     if (event.data.event === 'resource-change') {
@@ -428,10 +447,28 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     control_code: applicationInformation.controlCode ?? '',
     autostart_priority: applicationInformation.autostartPriority ?? 0,
     keySet,
-    show: () => true,
-    hide: () => true,
-    activateInput: () => true,
-    deactivateInput: () => true,
+    show: () => {
+      applicationVisible = true
+      applyApplicationVisibility()
+      reportApplicationPresentation()
+      return true
+    },
+    hide: () => {
+      applicationVisible = false
+      applyApplicationVisibility()
+      reportApplicationPresentation()
+      return true
+    },
+    activateInput: () => {
+      applicationInputActive = true
+      reportApplicationPresentation()
+      return true
+    },
+    deactivateInput: () => {
+      applicationInputActive = false
+      reportApplicationPresentation()
+      return true
+    },
     createApplication: (url: string) => {
       const resolved = allowedNavigationUrl(url)
       if (!resolved) {

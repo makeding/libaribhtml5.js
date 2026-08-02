@@ -64,7 +64,10 @@ document.querySelector<HTMLButtonElement>('[data-action="exit"]')?.addEventListe
   host.exitApplication()
 })
 document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach((button) => {
-  button.addEventListener('click', () => host.dispatchKey(Number(button.dataset.key)))
+  button.addEventListener('click', () => {
+    host.setApplicationInputActive(true)
+    host.dispatchKey(Number(button.dataset.key))
+  })
 })
 
 window.addEventListener('keydown', (event) => {
@@ -99,6 +102,7 @@ window.addEventListener('keydown', (event) => {
   const code = mapping[event.key]
   if (code === undefined) return
   event.preventDefault()
+  host.setApplicationInputActive(true)
   host.dispatchKey(code)
 })
 

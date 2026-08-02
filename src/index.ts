@@ -9,6 +9,11 @@ export type {
   AribReceiverLifecycleEvent,
   AribReceiverHostOptions,
 } from './receiver-host'
+export type {
+  AribApplicationPresentationState,
+  AribViewerParticipationEvent,
+  AribViewerParticipationNotification,
+} from './viewer-participation'
 export {
   BehindIframeMediaPlaneAdapter,
   DomObjectMediaPlaneAdapter,

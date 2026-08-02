@@ -34,6 +34,12 @@ import {
   normalizeLctBackgroundColor,
   resolveReceiverBackgroundColor,
 } from './layout'
+import {
+  ViewerParticipationController,
+  type AribApplicationPresentationState,
+  type AribViewerParticipationEvent,
+  type AribViewerParticipationNotification,
+} from './viewer-participation'
 
 export type {
   AribMediaPlane,
@@ -124,6 +130,8 @@ export type AribReceiverHostOptions = {
   systemInformation?: ReceiverSystemInformationOverrides
   /** Resolve receiver/CAS identifiers; defaults to the bundled Huggy demo identity. */
   getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
+  /** Receiver UI hook for a TR-B39 viewer-participation corner notification. */
+  onViewerParticipation?: (event: AribViewerParticipationEvent) => void
 }
 
 type RuntimeMessage = Record<string, unknown> & {
@@ -157,6 +165,8 @@ export class AribReceiverHost {
   private readonly onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   private readonly systemInformation?: ReceiverSystemInformationOverrides
   private readonly getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
+  private readonly onViewerParticipation?: (event: AribViewerParticipationEvent) => void
+  private readonly viewerParticipation = new ViewerParticipationController()
   private readonly resizeObserver: ResizeObserver
   private activeRuntimeId: string | null = null
   private logicalWidth = 3840
@@ -237,6 +247,7 @@ export class AribReceiverHost {
     this.onProgramGuideUnavailable = options.onProgramGuideUnavailable
     this.systemInformation = options.systemInformation
     this.getDeviceIdentifier = options.getDeviceIdentifier
+    this.onViewerParticipation = options.onViewerParticipation
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
@@ -302,6 +313,7 @@ export class AribReceiverHost {
       throw new Error(`External broadcast application URL is not allowed: ${resolved.href}`)
     }
     this.applicationExited = false
+    this.viewerParticipation.resetPresentation()
     this.iframe.style.removeProperty('display')
     this.invalidateRuntime('document-unload')
     // The receiver-owned background plane remains below an external video
@@ -322,6 +334,7 @@ export class AribReceiverHost {
     this.assertAlive()
     if (this.applicationExited) return
     this.applicationExited = true
+    this.viewerParticipation.setPresentation({ visible: false, inputActive: false })
     this.pendingStreamEvents.length = 0
     this.clearApplicationLoadTimer()
     this.invalidateRuntime('application-exit')
@@ -332,10 +345,11 @@ export class AribReceiverHost {
     this.onLifecycle?.({ type: 'exited' })
   }
 
-  dispatchKey(code: number): void {
+  dispatchKey(code: number): boolean {
     this.assertAlive()
+    if (!this.viewerParticipation.presentation.inputActive) return false
     const target = this.iframe.contentWindow
-    if (!target) return
+    if (!target) return false
     try {
       for (const type of ['keydown', 'keyup']) {
         const event = new KeyboardEvent(type, { bubbles: true, cancelable: true })
@@ -345,9 +359,36 @@ export class AribReceiverHost {
         })
         target.document.dispatchEvent(event)
       }
+      return true
     } catch {
       this.onStatus?.('キー入力を送信できません')
+      return false
     }
+  }
+
+  /** Transfer or release receiver-key ownership for the broadcast application. */
+  setApplicationInputActive(active: boolean): void {
+    this.assertAlive()
+    this.viewerParticipation.setPresentation({ inputActive: Boolean(active) })
+    this.postToRuntime('receiver-input-state', { active: Boolean(active) })
+  }
+
+  getApplicationPresentationState(): AribApplicationPresentationState {
+    return this.viewerParticipation.presentation
+  }
+
+  /** Handle the descriptor-less TR-B39 receiver notification outside the application. */
+  notifyViewerParticipationCorner(notification: AribViewerParticipationNotification): void {
+    if (this.destroyed) return
+    const event = this.viewerParticipation.notify(notification)
+    if (event) this.onViewerParticipation?.(event)
+  }
+
+  /** Discard notification versions while changing service or playback session. */
+  resetViewerParticipationNotifications(): void {
+    this.assertAlive()
+    this.viewerParticipation.resetSession()
+    this.postToRuntime('receiver-input-state', { active: false })
   }
 
   setCaptionTracks(componentTags: number[]): void {
@@ -527,6 +568,9 @@ export class AribReceiverHost {
       this.onUrlChange?.(String(message.url ?? ''))
       this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
       this.postToRuntime('application-information', { value: this.applicationInformation })
+      this.postToRuntime('receiver-input-state', {
+        active: this.viewerParticipation.presentation.inputActive,
+      })
       if (this.programInfo) this.postToRuntime('program-info', { value: this.programInfo })
       for (const value of this.pendingStreamEvents.splice(0)) {
         this.postToRuntime('stream-event', { value })
@@ -579,6 +623,12 @@ export class AribReceiverHost {
         this.onCaptionSubscription?.({ componentTags })
         return
       }
+      case 'application-presentation':
+        this.viewerParticipation.setPresentation({
+          visible: Boolean(message.visible),
+          inputActive: Boolean(message.inputActive),
+        })
+        return
       case 'replace-application': {
         const organizationId = Number(message.organizationId)
         const applicationId = Number(message.applicationId)
