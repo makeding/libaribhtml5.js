@@ -1,6 +1,15 @@
 /** Current demo receiver identifier (48-bit hexadecimal ACAS source value). */
 export const DEFAULT_RECEIVER_DEVICE_IDENTIFIER = '4194c4ae4730'
 
+/** Legacy BML browser.getIRDID() type used for the receiver/CAS identifier. */
+export const RECEIVER_IRD_ID_TYPE = 5
+
+export function getDefaultReceiverIrdId(type: number): string | null {
+  return type === RECEIVER_IRD_ID_TYPE
+    ? DEFAULT_RECEIVER_DEVICE_IDENTIFIER
+    : null
+}
+
 export type ReceiverDeviceIdentifierProvider = (
   kind: number,
 ) => string | null | undefined | Promise<string | null | undefined>

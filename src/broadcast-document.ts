@@ -1,4 +1,5 @@
 import { deferRomSoundMarkup } from './runtime/romsound-markup.ts'
+import { DEFAULT_RECEIVER_DEVICE_IDENTIFIER } from './device-identifier.ts'
 
 export type BroadcastDocumentOptions = {
   /** Current carousel mount, for example /data-broadcast/sh4/. */
@@ -47,6 +48,9 @@ export function createRuntimeBootstrap(scopePath = '/data-broadcast/'): string {
             modelname: 'unknown',
             baseurl: new URL(${JSON.stringify(basePath)}, location.origin).href
           }
+        },
+        getDeviceIdentifier: function (kind, callback) {
+          queueMicrotask(function () { callback(${JSON.stringify(DEFAULT_RECEIVER_DEVICE_IDENTIFIER)}) })
         }
       }
     })

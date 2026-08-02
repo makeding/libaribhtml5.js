@@ -26,6 +26,24 @@ MMT の source of truth は LCT です。実装時の優先順位は次の通り
    fallback として使ってよい。ただし、これはアプリケーション CSS を LCT と解釈するものではない。
 3. どちらも得られない間の receiver-owned fallback は黒 (`#000`) とする。
 
+`tlvdemux` の WASM 回調は LCT の 24 bit RGB を `backgroundColorRgb` として渡す。
+その値はページ CSS に変換せず、receiver host の背景プレーンへ渡す。
+
+```ts
+const demuxer = new TlvDemuxer({
+  onLayoutConfiguration(layout) {
+    host.setLctBackgroundColor(layout.backgroundColorRgb)
+  },
+})
+
+// 選局・別サービス・別チューニング session へ移る前に前回の LCT を破棄する。
+host.setLctBackgroundColor(null)
+```
+
+LCT の色が設定されている間、後から到着した application stage の CSS 色は
+背景プレーンを上書きしない。`null` で LCT 色を解除した場合だけ、stage 色または
+黒の fallback へ戻る。
+
 この fallback は規格上の既定色ではありません。白いブラウザ canvas の露出を避けるための
 実装上の選択です。確認に使った NHK BS8K の `8k.mmts` から抽出したファイルも、
 `top/source/top.css` の `body` と `#vstream`、および

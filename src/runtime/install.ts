@@ -25,6 +25,7 @@ import {
 } from './system-information'
 import { cloneProgramInfo, type ProgramInfo } from '../program-info'
 import {
+  getDefaultReceiverIrdId,
   resolveReceiverDeviceIdentifier,
   type ReceiverDeviceIdentifierProvider,
 } from '../device-identifier'
@@ -34,6 +35,13 @@ import {
   type RuntimeEvent,
   type RuntimeEventSelector,
 } from './stream-event'
+import {
+  ARIB_PERMISSION_BITS,
+  AribApplicationBoundaryPolicy,
+  type AribPermissionManagedArea,
+  type AribPermissionBit,
+  type RuntimePermissionManagedArea,
+} from './application-boundary'
 
 export type { ProgramInfo } from '../program-info'
 export type {
@@ -41,6 +49,10 @@ export type {
   RuntimeEventSelector,
   RuntimeEventSource,
 } from './stream-event'
+export type {
+  AribPermissionManagedArea,
+  RuntimePermissionManagedArea,
+} from './application-boundary'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
@@ -69,6 +81,8 @@ export type RuntimeApplicationInformation = {
   applicationId?: number
   controlCode?: string
   autostartPriority?: number
+  /** Decoded loops from MH-AIT descriptor 0x802C. Omit when absent. */
+  permissionManagedAreas?: readonly RuntimePermissionManagedArea[]
 }
 
 type CaptionListener = (data: string) => void
@@ -142,6 +156,21 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   const resolveRuntimeUrl = (value: unknown) => {
     const documentRelative = new URL(String(value ?? ''), target.location.href)
     return resolveBroadcastUrl(documentRelative, broadcastBaseUrl, broadcastRootUrl)
+  }
+  let applicationInformation: RuntimeApplicationInformation = { ...options.application }
+  const applicationBoundary = new AribApplicationBoundaryPolicy(
+    broadcastBaseUrl,
+    target.location.href,
+    applicationInformation.permissionManagedAreas,
+  )
+  const notAuthorized = (): Error => {
+    const error = new Error('Not authorized') as Error & { code?: string }
+    error.name = 'Error'
+    error.code = 'NOT_AUTHORIZED_ERR'
+    return error
+  }
+  const requirePermission = (bit: AribPermissionBit): void => {
+    if (!applicationBoundary.permits(target.location.href, bit)) throw notAuthorized()
   }
 
   const runtimeId = target.crypto.randomUUID?.() ??
@@ -240,12 +269,14 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   const installBroadcastObjectApi = (object: BroadcastObject) => {
     if (typeof object.isCaptionExistent !== 'function') {
       object.isCaptionExistent = (source: string) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastMedia)
         const componentTag = captionComponentTag(source)
         return componentTag !== null && captionTracks.has(componentTag)
       }
     }
     if (typeof object.addCaptionListener !== 'function') {
       object.addCaptionListener = (listener: CaptionListener, source: string) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastMedia)
         const componentTag = captionComponentTag(source)
         if (typeof listener !== 'function' || componentTag === null) return false
         captionListeners.set(listener, componentTag)
@@ -255,6 +286,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
     if (typeof object.removeCaptionListener !== 'function') {
       object.removeCaptionListener = (listener: CaptionListener) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastMedia)
         const removed = captionListeners.delete(listener)
         if (removed) reportCaptionSubscriptions()
         return removed
@@ -262,6 +294,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
   }
 
+  let applyApplicationInformation: (value: RuntimeApplicationInformation) => void = () => {}
   target.addEventListener('message', (event) => {
     if (event.source !== target.parent || event.origin !== target.location.origin) return
     if (event.data?.type !== 'arib-host' || event.data.runtimeId !== runtimeId) return
@@ -303,6 +336,14 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         return
       }
       for (const listener of eventIdListeners) queueMicrotask(listener)
+      return
+    }
+    if (event.data.event === 'application-information') {
+      try {
+        applyApplicationInformation(event.data.value ?? {})
+      } catch (error) {
+        postRuntime('error', { message: `Invalid application information: ${String(error)}` })
+      }
       return
     }
     if (event.data.event === 'resource-change') {
@@ -348,11 +389,9 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   const allowedNavigationUrl = (value: unknown): URL | null => {
     try {
       const url = resolveRuntimeUrl(value)
-      // Broadcast application paths are signalled by MH-AIT and are not tied
-      // to NHK's /sh4 or /sh8 directory convention. The host maps collected
-      // broadcast resources into this origin; this is its sandbox policy, not
-      // an implementation of the MH-AIT application-boundary descriptor.
-      return url.origin === target.location.origin && /^https?:$/.test(url.protocol) ? url : null
+      if (!/^https?:$/.test(url.protocol)) return null
+      if (url.origin !== target.location.origin && !options.allowExternalNetwork) return null
+      return applicationBoundary.evaluate(url).withinBoundary ? url : null
     } catch {
       return null
     }
@@ -372,12 +411,22 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     nhksh.__navigationGuarded = true
   }
 
+  const boundaryDescriptor = {
+    getCurrentBoundary: () => {
+      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
+      return applicationBoundary.getCurrentBoundary()
+    },
+    addPermissionManagedArea: (area: AribPermissionManagedArea) => {
+      requirePermission(ARIB_PERMISSION_BITS.boundaryExtension)
+      applicationBoundary.addPermissionManagedArea(area)
+    },
+  }
   const ownerApplication = {
-    type: options.application?.type ?? '',
-    organization_id: options.application?.organizationId ?? 0,
-    application_id: options.application?.applicationId ?? 0,
-    control_code: options.application?.controlCode ?? '',
-    autostart_priority: options.application?.autostartPriority ?? 0,
+    type: applicationInformation.type ?? '',
+    organization_id: applicationInformation.organizationId ?? 0,
+    application_id: applicationInformation.applicationId ?? 0,
+    control_code: applicationInformation.controlCode ?? '',
+    autostart_priority: applicationInformation.autostartPriority ?? 0,
     keySet,
     show: () => true,
     hide: () => true,
@@ -400,6 +449,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       applicationId: number,
       aitUrl: string | null = null,
     ) => {
+      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
       if (!Number.isSafeInteger(organizationId) || organizationId < 0 ||
           !Number.isSafeInteger(applicationId) || applicationId < 0) {
         postRuntime('error', { message: 'Invalid replaceApplication application identifier' })
@@ -412,8 +462,28 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       })
     },
     exitFromManagedState: (url: string) => {
+      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
       postRuntime('exit-managed-state', { url: String(url ?? '') })
     },
+    getApplicationBoundaryAndPermissionDescriptor: () => {
+      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
+      return applicationBoundary.hasDescriptor() ? boundaryDescriptor : null
+    },
+  }
+
+  applyApplicationInformation = (value: RuntimeApplicationInformation) => {
+    const next = { ...value }
+    applicationBoundary.update(next.permissionManagedAreas)
+    applicationInformation = next
+    ownerApplication.type = applicationInformation.type ?? ''
+    ownerApplication.organization_id = applicationInformation.organizationId ?? 0
+    ownerApplication.application_id = applicationInformation.applicationId ?? 0
+    ownerApplication.control_code = applicationInformation.controlCode ?? ''
+    ownerApplication.autostart_priority = applicationInformation.autostartPriority ?? 0
+    scheduleMediaPlaneReport()
+    if (!applicationBoundary.evaluate(target.location.href).withinBoundary) {
+      postRuntime('application-boundary-exit', { url: target.location.href })
+    }
   }
 
   defineNavigatorProperty(target.navigator, 'applicationManager', {
@@ -427,8 +497,13 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   synchronizeReceiverCompatibilityStorage(target.localStorage, systemInformation)
 
   defineNavigatorProperty(target.navigator, 'receiverDevice', {
-    getSystemInformation: () => ({ ...systemInformation }),
+    confirmIPNetwork: () => options.allowExternalNetwork ?? false,
+    getSystemInformation: () => {
+      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
+      return { ...systemInformation }
+    },
     getDeviceIdentifier: (kind: number, callback: (value: string) => void) => {
+      requirePermission(ARIB_PERMISSION_BITS.deviceIdentifier)
       // The default 48-bit value preserves the demo's existing ACAS display:
       // 0721 0721 0721 0724 9674. Product hosts can resolve each kind.
       queueMicrotask(() => {
@@ -439,19 +514,24 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       })
     },
     getCurrentEventInformation: (callback: (value: ProgramInfo | null) => void) => {
+      requirePermission(ARIB_PERMISSION_BITS.currentEventInformation)
       queueMicrotask(() => callback(programInfo ? cloneProgramInfo(programInfo) : null))
     },
     cacheEvent: {
       addCacheEventListener: (path: string, listener: CacheEventListener) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         return resourceCache.addListener(path, listener)
       },
       storeDataResource: (path: string, listener?: CacheEventListener) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         return resourceCache.store(path, listener)
       },
       releaseDataResource: (path?: string) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         return resourceCache.release(path)
       },
       removeCacheEventListener: (path: string, listener?: CacheEventListener) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         return resourceCache.removeListener(path, listener)
       },
     },
@@ -460,6 +540,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         selector: RuntimeEventSelector,
         callback: (event: RuntimeEvent) => void,
       ) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         if (typeof callback !== 'function') return false
         listeners.add({ selector, callback })
         return true
@@ -468,6 +549,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         selector?: RuntimeEventSelector,
         callback?: (event: RuntimeEvent) => void,
       ) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         if (!selector) {
           listeners.clear()
           return true
@@ -481,11 +563,13 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         return true
       },
       addEventIDUpdateListener: (callback: () => void) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         if (typeof callback !== 'function') return false
         eventIdListeners.add(callback)
         return true
       },
       removeEventIDUpdateListener: (callback?: () => void) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
         if (callback) eventIdListeners.delete(callback)
         else eventIdListeners.clear()
         return true
@@ -495,7 +579,15 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
 
   defineNavigatorProperty(target.navigator, 'bmlCompat', {
     browserPseudo: {
+      // Older broadcaster applications use the synchronous BML API instead
+      // of receiverDevice.getDeviceIdentifier(). Keep both paths on the same
+      // stable demo ACAS identifier.
+      getIRDID: (type: number) => {
+        requirePermission(ARIB_PERMISSION_BITS.deviceIdentifier)
+        return getDefaultReceiverIrdId(type)
+      },
       readPersistentArray: (namespace: string, structure: string) => {
+        requirePermission(ARIB_PERMISSION_BITS.persistentStorage)
         const raw = target.localStorage.getItem(`arib:nvram:${namespace}`)
         if (raw) {
           const value = JSON.parse(raw) as Record<string, unknown>
@@ -504,6 +596,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         return readReceiverInformationArray(namespace, structure, systemInformation)
       },
       writePersistentArray: (namespace: string, structure: string, values: unknown[]) => {
+        requirePermission(ARIB_PERMISSION_BITS.persistentStorage)
         const output = Object.fromEntries(
           structure.split(',').map((field, index) => [field, values[index]]),
         )
@@ -800,10 +893,15 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       reportStageStyle()
       stageStyleReported = true
     }
-    const object = target.document.querySelector<HTMLElement>(
-      'object[type="video/x-arib2-broadcast"], ' +
-      'object[data-arib-type="video/x-arib2-broadcast"]',
+    const object = applicationBoundary.permits(
+      target.location.href,
+      ARIB_PERMISSION_BITS.broadcastMedia,
     )
+      ? target.document.querySelector<HTMLElement>(
+          'object[type="video/x-arib2-broadcast"], ' +
+          'object[data-arib-type="video/x-arib2-broadcast"]',
+        )
+      : null
     if (!object) {
       observeMediaObject(null)
       const removedSlotId = activeMediaObject ? slotIdFor(activeMediaObject) : ''
@@ -880,10 +978,15 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     // DOMContentLoaded/ready listeners call isCaptionExistent().  Stage
     // sampling is intentionally left to the scheduled animation-frame report
     // below, after application ready callbacks have selected their theme.
-    const object = target.document.querySelector<HTMLElement>(
-      'object[type="video/x-arib2-broadcast"], ' +
-      'object[data-arib-type="video/x-arib2-broadcast"]',
+    const object = applicationBoundary.permits(
+      target.location.href,
+      ARIB_PERMISSION_BITS.broadcastMedia,
     )
+      ? target.document.querySelector<HTMLElement>(
+          'object[type="video/x-arib2-broadcast"], ' +
+          'object[data-arib-type="video/x-arib2-broadcast"]',
+        )
+      : null
     if (object) installBroadcastObjectApi(object as BroadcastObject)
     prepareExternalMediaPlaneCanvas()
     scheduleMediaPlaneReport()

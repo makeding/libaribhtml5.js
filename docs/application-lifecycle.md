@@ -65,6 +65,40 @@ const host = new AribReceiverHost({
 許可境界と外部 network policy を receiver 側で検証し、対応する場合だけ
 `onExitManagedState` で処理します。
 
+## アプリケーション境界と権限
+
+MH-AIT の `MH-Application Boundary and Permission Descriptor` (`descriptor_tag=0x802C`)
+は、decoder 側で一つの application に属する loop を平坦化し、次の形で渡します。
+
+```ts
+host.setApplicationInformation({
+  organizationId: application.organizationId,
+  applicationId: application.applicationId,
+  permissionManagedAreas: application.boundaryDescriptors.flatMap(descriptor =>
+    descriptor.areas.map(area => ({
+      // bitmap ID を含む raw 16-bit 値
+      permissionBitmaps: area.permissionBitmaps,
+      managedUrls: area.managedUrls,
+    })),
+  ),
+})
+```
+
+descriptor がない場合は `permissionManagedAreas` 自体を省略します。この場合は境界が無限で
+全権限です。descriptor が存在し、ある area の `managed_URL_count` が 0 の場合は
+`managedUrls: []`（または `null`）で全 location を表します。より狭い domain/sub-directory の
+設定が一致した場合はそちらを優先します。放送 VFS (`broadcastBaseUrl`) から取得した content は、
+TR-B39 の規定どおり descriptor にかかわらず境界内・全権限として扱います。
+
+runtime は bitmap 0/1 を解釈し、bit 12/10/9/8/7/5 を現在実装済みの broadcast media、番組情報、
+persistent array、boundary extension、receiver ID、application/cache/EMT/system-information API に
+適用します。権限がない同期 API は `Error` (`code="NOT_AUTHORIZED_ERR"`) を送出し、AIT 更新後も
+同じ runtime に直ちに反映します。更新によって現在の communication document が境界外になった場合、
+host は application を終了します。
+
+境界権限と `allowExternalNetwork` は別条件です。MH-AIT が URL を許可しても、host の network policy が
+offline なら外部 HTTP へは遷移・通信できません。
+
 ## AUTOSTART と PRESENT の同居
 
 一つの tuning/session generation につき managed application slot は一つにします。

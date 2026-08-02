@@ -30,6 +30,10 @@ import {
   type AribProgramGuideUnavailableEvent,
   type AribProgramGuideUnavailableHandler,
 } from './program-guide'
+import {
+  normalizeLctBackgroundColor,
+  resolveReceiverBackgroundColor,
+} from './layout'
 
 export type {
   AribMediaPlane,
@@ -162,6 +166,8 @@ export class AribReceiverHost {
   private programInfo: ProgramInfo | null = null
   private readonly pendingStreamEvents: RuntimeEvent[] = []
   private broadcastClock: (AribBroadcastClock & { monotonicMilliseconds: number }) | null = null
+  private lctBackgroundColor: string | null = null
+  private stageBackgroundColor: string | null = null
   private video: HTMLVideoElement | null = null
   private mediaPlaneEnabled = false
   private applicationExited = false
@@ -256,7 +262,27 @@ export class AribReceiverHost {
   /** Set the MH-AIT identity exposed by applicationManager.getOwnerApplication(). */
   setApplicationInformation(application: AribApplicationInformation | null): void {
     this.assertAlive()
-    this.applicationInformation = application ? { ...application } : {}
+    this.applicationInformation = application ? {
+      ...application,
+      permissionManagedAreas: application.permissionManagedAreas?.map(area => ({
+        permissionBitmaps: area.permissionBitmaps === null
+          ? null
+          : [...area.permissionBitmaps],
+        managedUrls: area.managedUrls === null ? null : [...area.managedUrls],
+      })),
+    } : {}
+    this.postToRuntime('application-information', { value: this.applicationInformation })
+  }
+
+  /**
+   * Set the receiver-owned background plane from the current LCT
+   * Background_Color_Descriptor. Pass null when changing service/session or
+   * when the active LCT no longer carries the descriptor.
+   */
+  setLctBackgroundColor(backgroundColorRgb: number | null): void {
+    this.assertAlive()
+    this.lctBackgroundColor = normalizeLctBackgroundColor(backgroundColorRgb)
+    this.applyReceiverBackgroundColor()
   }
 
   /** @deprecated Pass an AribMediaPlaneAdapter to the constructor. */
@@ -281,7 +307,8 @@ export class AribReceiverHost {
     // The receiver-owned background plane remains below an external video
     // surface. It must not be moved into the iframe, where it would cover the
     // video together with the application canvas.
-    this.viewport.style.backgroundColor = '#000'
+    this.stageBackgroundColor = null
+    this.applyReceiverBackgroundColor()
     this.onStatus?.(status)
     this.onUrlChange?.(resolved.pathname)
     this.onLifecycle?.({ type: 'loading', url: resolved.href })
@@ -499,6 +526,7 @@ export class AribReceiverHost {
       this.activeRuntimeId = message.runtimeId
       this.onUrlChange?.(String(message.url ?? ''))
       this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
+      this.postToRuntime('application-information', { value: this.applicationInformation })
       if (this.programInfo) this.postToRuntime('program-info', { value: this.programInfo })
       for (const value of this.pendingStreamEvents.splice(0)) {
         this.postToRuntime('stream-event', { value })
@@ -528,11 +556,14 @@ export class AribReceiverHost {
           url: String(message.url ?? ''),
         })
         return
+      case 'application-boundary-exit':
+        this.exitApplication('アプリケーション境界外への遷移を終了しました')
+        return
       case 'stage-style': {
         const color = String(message.backgroundColor ?? '')
-        if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
-          this.viewport.style.backgroundColor = color
-        }
+        this.stageBackgroundColor = color && color !== 'rgba(0, 0, 0, 0)' &&
+          color !== 'transparent' ? color : null
+        this.applyReceiverBackgroundColor()
         return
       }
       case 'media-plane':
@@ -704,5 +735,15 @@ export class AribReceiverHost {
 
   private assertAlive(): void {
     if (this.destroyed) throw new Error('AribReceiverHost has been destroyed')
+  }
+
+  private applyReceiverBackgroundColor(): void {
+    // LCT is authoritative. The document stage is only a compatibility
+    // fallback while no LCT colour is available; black avoids exposing the
+    // embedding page behind an otherwise transparent receiver canvas.
+    this.viewport.style.backgroundColor = resolveReceiverBackgroundColor(
+      this.lctBackgroundColor,
+      this.stageBackgroundColor,
+    )
   }
 }

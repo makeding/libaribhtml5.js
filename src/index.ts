@@ -44,15 +44,28 @@ export type {
   RuntimeEventSource,
 } from './runtime/stream-event'
 export type {
+  AribPermissionManagedArea,
   RuntimeApplicationInformation,
+  RuntimePermissionManagedArea,
   RuntimeOptions,
   RuntimeWindow,
 } from './runtime/install'
 export {
+  ARIB_PERMISSION_BITS,
+  AribApplicationBoundaryPolicy,
+} from './runtime/application-boundary'
+export type {
+  AribPermissionBit,
+  AribPermissionEvaluation,
+} from './runtime/application-boundary'
+export {
   DEFAULT_RECEIVER_DEVICE_IDENTIFIER,
+  getDefaultReceiverIrdId,
+  RECEIVER_IRD_ID_TYPE,
   resolveReceiverDeviceIdentifier,
 } from './device-identifier'
 export type { ReceiverDeviceIdentifierProvider } from './device-identifier'
+export { normalizeLctBackgroundColor } from './layout'
 export type {
   BroadcastResourceCacheEvent,
   BroadcastResourceCacheListener,

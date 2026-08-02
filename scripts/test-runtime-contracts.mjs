@@ -23,6 +23,7 @@ import {
 import { cloneProgramInfo } from '../src/program-info.ts'
 import {
   DEFAULT_RECEIVER_DEVICE_IDENTIFIER,
+  getDefaultReceiverIrdId,
   resolveReceiverDeviceIdentifier,
 } from '../src/device-identifier.ts'
 import { BroadcastVfsSession } from '../src/service-worker-vfs.ts'
@@ -31,6 +32,14 @@ import { resolveBroadcastMediaSlot } from '../src/runtime/media-slot.ts'
 import { BehindIframeMediaPlaneAdapter } from '../src/media-plane.ts'
 import { makeIframePointerTransparent } from '../src/iframe-input.ts'
 import { shouldSuppressRomSoundPlayback } from '../src/runtime/platform.ts'
+import {
+  normalizeLctBackgroundColor,
+  resolveReceiverBackgroundColor,
+} from '../src/layout.ts'
+import {
+  ARIB_PERMISSION_BITS,
+  AribApplicationBoundaryPolicy,
+} from '../src/runtime/application-boundary.ts'
 
 const mediaRect = (left, top, width, height) => ({
   x: left,
@@ -138,6 +147,116 @@ assert.equal(shouldSuppressRomSoundPlayback({
   platform: 'MacIntel',
   maxTouchPoints: 0,
 }), false)
+assert.equal(normalizeLctBackgroundColor(0), '#000000')
+assert.equal(normalizeLctBackgroundColor(0x12abef), '#12abef')
+assert.equal(normalizeLctBackgroundColor(null), null)
+assert.throws(() => normalizeLctBackgroundColor(-1), /24-bit integer/)
+assert.throws(() => normalizeLctBackgroundColor(0x1000000), /24-bit integer/)
+assert.throws(() => normalizeLctBackgroundColor(1.5), /24-bit integer/)
+assert.equal(resolveReceiverBackgroundColor('#123456', 'rgb(1, 2, 3)'), '#123456')
+assert.equal(resolveReceiverBackgroundColor(null, 'rgb(1, 2, 3)'), 'rgb(1, 2, 3)')
+assert.equal(resolveReceiverBackgroundColor(null, null), '#000')
+
+const bitmap1 = (...bits) => 0x2000 | bits.reduce((value, bit) => value | (1 << bit), 0)
+const unrestrictedBoundary = new AribApplicationBoundaryPolicy(
+  'https://receiver.example/data-broadcast/',
+  'https://receiver.example/data-broadcast/app/index.html',
+)
+assert.equal(
+  unrestrictedBoundary.permits(
+    'https://communication.example/app/',
+    ARIB_PERMISSION_BITS.deviceIdentifier,
+  ),
+  true,
+)
+
+const scopedBoundary = new AribApplicationBoundaryPolicy(
+  'https://receiver.example/data-broadcast/',
+  'https://receiver.example/data-broadcast/app/index.html',
+  [
+    { permissionBitmaps: [bitmap1()], managedUrls: null },
+    {
+      permissionBitmaps: [bitmap1(
+        ARIB_PERMISSION_BITS.broadcastResources,
+        ARIB_PERMISSION_BITS.deviceIdentifier,
+      )],
+      managedUrls: ['https://communication.example/member/'],
+    },
+  ],
+)
+assert.equal(
+  scopedBoundary.permits(
+    'https://communication.example/member/page.html',
+    ARIB_PERMISSION_BITS.deviceIdentifier,
+  ),
+  true,
+)
+assert.equal(
+  scopedBoundary.permits(
+    'https://communication.example/memberish/page.html',
+    ARIB_PERMISSION_BITS.deviceIdentifier,
+  ),
+  false,
+)
+assert.equal(
+  scopedBoundary.evaluate('https://outside.example/').withinBoundary,
+  true,
+)
+assert.equal(
+  scopedBoundary.permits(
+    'https://outside.example/',
+    ARIB_PERMISSION_BITS.broadcastResources,
+  ),
+  false,
+)
+assert.equal(
+  scopedBoundary.permits(
+    'https://receiver.example/data-broadcast/app/index.html',
+    ARIB_PERMISSION_BITS.cas,
+  ),
+  true,
+)
+
+const finiteBoundary = new AribApplicationBoundaryPolicy(
+  'https://receiver.example/data-broadcast/',
+  'https://receiver.example/data-broadcast/app/index.html',
+  [{ permissionBitmaps: [bitmap1(ARIB_PERMISSION_BITS.broadcastResources)], managedUrls: [
+    'https://communication.example/member/',
+  ] }],
+)
+assert.equal(finiteBoundary.evaluate('https://outside.example/').withinBoundary, false)
+assert.equal(finiteBoundary.evaluate('https://communication.example/member/').withinBoundary, true)
+
+const invalidBitmap0 = new AribApplicationBoundaryPolicy(
+  'https://receiver.example/data-broadcast/',
+  'https://receiver.example/data-broadcast/app/index.html',
+  [{ permissionBitmaps: [1 << ARIB_PERMISSION_BITS.deviceIdentifier], managedUrls: null }],
+)
+assert.equal(
+  invalidBitmap0.permits('https://communication.example/', ARIB_PERMISSION_BITS.deviceIdentifier),
+  false,
+)
+finiteBoundary.addPermissionManagedArea({
+  permission: [bitmap1(ARIB_PERMISSION_BITS.deviceIdentifier)],
+  urls: ['https://device.example/'],
+})
+assert.equal(
+  finiteBoundary.permits('https://device.example/path', ARIB_PERMISSION_BITS.deviceIdentifier),
+  true,
+)
+const boundarySnapshot = finiteBoundary.getCurrentBoundary()
+boundarySnapshot[0].permission[0] = 0
+assert.equal(
+  finiteBoundary.permits(
+    'https://communication.example/member/',
+    ARIB_PERMISSION_BITS.broadcastResources,
+  ),
+  true,
+)
+assert.throws(
+  () => finiteBoundary.addPermissionManagedArea({ permission: undefined, urls: null }),
+  error => error.code === 'INVALID_PARAM_ERR',
+)
 
 const origin = 'https://receiver.example/player/index.html'
 assert.deepEqual(RECEIVER_SYSTEM_IDENTITY, {
@@ -242,6 +361,8 @@ assert.throws(() => cloneProgramInfo({ duration: -1 }), /millisecond duration/)
 assert.equal(await resolveReceiverDeviceIdentifier(0), DEFAULT_RECEIVER_DEVICE_IDENTIFIER)
 assert.equal(await resolveReceiverDeviceIdentifier(7, kind => `receiver-${kind}`), 'receiver-7')
 assert.equal(await resolveReceiverDeviceIdentifier(9, () => null), '')
+assert.equal(getDefaultReceiverIrdId(5), DEFAULT_RECEIVER_DEVICE_IDENTIFIER)
+assert.equal(getDefaultReceiverIrdId(4), null)
 const base = normalizeBroadcastBaseUrl(undefined, origin)
 assert.equal(base.href, 'https://receiver.example/data-broadcast/')
 const root = deriveBroadcastRootUrl(
@@ -286,6 +407,7 @@ const bootstrapContext = {
   location: { origin: 'https://receiver.example' },
   navigator: {},
   parent: bootstrapParent,
+  queueMicrotask,
   setTimeout(callback) {
     scheduledBootstrap.push(callback)
   },
@@ -297,6 +419,12 @@ assert.equal(
   bootstrapContext.navigator.receiverDevice.getSystemInformation().baseurl,
   'https://receiver.example/receiver-vfs/',
 )
+let bootstrapDeviceIdentifier
+bootstrapContext.navigator.receiverDevice.getDeviceIdentifier(5, value => {
+  bootstrapDeviceIdentifier = value
+})
+await Promise.resolve()
+assert.equal(bootstrapDeviceIdentifier, DEFAULT_RECEIVER_DEVICE_IDENTIFIER)
 assert.equal(scheduledBootstrap.length, 1)
 let installedBootstrapTarget
 bootstrapParent.__ARIB_HTML5_INSTALL__ = target => {
