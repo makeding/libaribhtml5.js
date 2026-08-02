@@ -12,7 +12,6 @@ import {
   BehindIframeMediaPlaneAdapter,
   type AribMediaPlane,
   type AribMediaPlaneAdapter,
-  type AribMediaPlaneLayer,
   type AribMediaPlaneUnmountReason,
 } from './media-plane'
 import {
@@ -31,15 +30,20 @@ import {
   type AribProgramGuideUnavailableHandler,
 } from './program-guide'
 import {
-  normalizeLctBackgroundColor,
-  resolveReceiverBackgroundColor,
-} from './layout'
-import {
   ViewerParticipationController,
   type AribApplicationPresentationState,
   type AribViewerParticipationEvent,
   type AribViewerParticipationNotification,
 } from './viewer-participation'
+import {
+  normalizeApplicationReplaceRequest,
+  normalizeCaptionSubscriptionTags,
+  normalizeMediaPlane,
+  normalizeStageBackgroundColor,
+  type AribApplicationReplaceRequest,
+  type RuntimeMessage,
+} from './receiver/protocol'
+import { ReceiverCanvasController } from './receiver/canvas-controller'
 
 export type {
   AribMediaPlane,
@@ -64,11 +68,7 @@ export type AribCaptionSubscription = {
 
 export type AribApplicationInformation = RuntimeApplicationInformation
 
-export type AribApplicationReplaceRequest = {
-  organizationId: number
-  applicationId: number
-  aitUrl: string | null
-}
+export type { AribApplicationReplaceRequest } from './receiver/protocol'
 
 export type AribApplicationReplaceHandler = (
   request: AribApplicationReplaceRequest,
@@ -134,12 +134,6 @@ export type AribReceiverHostOptions = {
   onViewerParticipation?: (event: AribViewerParticipationEvent) => void
 }
 
-type RuntimeMessage = Record<string, unknown> & {
-  type?: string
-  runtimeId?: string
-  event?: string
-}
-
 export class AribReceiverHost {
   readonly iframe: HTMLIFrameElement
   readonly viewport: HTMLElement
@@ -167,17 +161,13 @@ export class AribReceiverHost {
   private readonly getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
   private readonly onViewerParticipation?: (event: AribViewerParticipationEvent) => void
   private readonly viewerParticipation = new ViewerParticipationController()
-  private readonly resizeObserver: ResizeObserver
+  private readonly canvas: ReceiverCanvasController
   private activeRuntimeId: string | null = null
-  private logicalWidth = 3840
-  private logicalHeight = 2160
   private captionComponentTags: number[] = []
   private applicationInformation: AribApplicationInformation = {}
   private programInfo: ProgramInfo | null = null
   private readonly pendingStreamEvents: RuntimeEvent[] = []
   private broadcastClock: (AribBroadcastClock & { monotonicMilliseconds: number }) | null = null
-  private lctBackgroundColor: string | null = null
-  private stageBackgroundColor: string | null = null
   private video: HTMLVideoElement | null = null
   private mediaPlaneEnabled = false
   private applicationExited = false
@@ -251,9 +241,10 @@ export class AribReceiverHost {
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
     this.iframe.addEventListener('load', this.handleFrameLoad)
-    this.resizeObserver = new ResizeObserver(() => this.fitBroadcastCanvas())
-    this.resizeObserver.observe(this.viewport)
-    this.fitBroadcastCanvas()
+    this.canvas = new ReceiverCanvasController({
+      iframe: this.iframe,
+      viewport: this.viewport,
+    })
   }
 
   installRuntime(target: RuntimeWindow): void {
@@ -292,8 +283,7 @@ export class AribReceiverHost {
    */
   setLctBackgroundColor(backgroundColorRgb: number | null): void {
     this.assertAlive()
-    this.lctBackgroundColor = normalizeLctBackgroundColor(backgroundColorRgb)
-    this.applyReceiverBackgroundColor()
+    this.canvas.setLctBackgroundColor(backgroundColorRgb)
   }
 
   /** @deprecated Pass an AribMediaPlaneAdapter to the constructor. */
@@ -319,8 +309,7 @@ export class AribReceiverHost {
     // The receiver-owned background plane remains below an external video
     // surface. It must not be moved into the iframe, where it would cover the
     // video together with the application canvas.
-    this.stageBackgroundColor = null
-    this.applyReceiverBackgroundColor()
+    this.canvas.resetStageBackground()
     this.onStatus?.(status)
     this.onUrlChange?.(resolved.pathname)
     this.onLifecycle?.({ type: 'loading', url: resolved.href })
@@ -502,7 +491,7 @@ export class AribReceiverHost {
     this.pendingStreamEvents.length = 0
     this.ownerWindow.removeEventListener('message', this.handleRuntimeMessage)
     this.iframe.removeEventListener('load', this.handleFrameLoad)
-    this.resizeObserver.disconnect()
+    this.canvas.dispose()
     this.clearApplicationLoadTimer()
     this.invalidateRuntime('host-destroy')
     this.video = null
@@ -604,10 +593,9 @@ export class AribReceiverHost {
         this.exitApplication('アプリケーション境界外への遷移を終了しました')
         return
       case 'stage-style': {
-        const color = String(message.backgroundColor ?? '')
-        this.stageBackgroundColor = color && color !== 'rgba(0, 0, 0, 0)' &&
-          color !== 'transparent' ? color : null
-        this.applyReceiverBackgroundColor()
+        this.canvas.setStageBackgroundColor(
+          normalizeStageBackgroundColor(message.backgroundColor),
+        )
         return
       }
       case 'media-plane':
@@ -615,11 +603,7 @@ export class AribReceiverHost {
         this.applyMediaPlane(message)
         return
       case 'caption-subscription': {
-        const componentTags = Array.isArray(message.componentTags)
-          ? [...new Set(message.componentTags
-              .map(Number)
-              .filter(value => Number.isInteger(value) && value >= 0 && value <= 0xffff))]
-          : []
+        const componentTags = normalizeCaptionSubscriptionTags(message.componentTags)
         this.onCaptionSubscription?.({ componentTags })
         return
       }
@@ -630,17 +614,8 @@ export class AribReceiverHost {
         })
         return
       case 'replace-application': {
-        const organizationId = Number(message.organizationId)
-        const applicationId = Number(message.applicationId)
-        const request: AribApplicationReplaceRequest = {
-          organizationId,
-          applicationId,
-          aitUrl: message.aitUrl === null || message.aitUrl === undefined
-            ? null
-            : String(message.aitUrl),
-        }
-        if (!Number.isSafeInteger(organizationId) || organizationId < 0 ||
-            !Number.isSafeInteger(applicationId) || applicationId < 0) {
+        const request = normalizeApplicationReplaceRequest(message)
+        if (!request) {
           this.onStatus?.('不正なアプリケーション切替要求を拒否しました')
           return
         }
@@ -679,57 +654,21 @@ export class AribReceiverHost {
   }
 
   private applyMediaPlane(message: RuntimeMessage): void {
-    if (!message.visible) {
-      const plane: AribMediaPlane = {
-        slotId: String(message.slotId ?? ''),
-        visible: false,
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        screenWidth: this.logicalWidth,
-        screenHeight: this.logicalHeight,
-        layer: this.readMediaLayer(message.layer),
-      }
+    const logicalSize = this.canvas.logicalSize
+    const plane = normalizeMediaPlane(message, {
+      screenWidth: logicalSize.width,
+      screenHeight: logicalSize.height,
+    })
+    if (!plane.visible) {
       this.onMediaPlane?.(plane)
       this.onVideoPlane?.(plane)
       return
     }
-    const plane: AribMediaPlane = {
-      slotId: String(message.slotId ?? ''),
-      visible: true,
-      x: Number(message.x) || 0,
-      y: Number(message.y) || 0,
-      width: Number(message.width) || 0,
-      height: Number(message.height) || 0,
-      screenWidth: Number(message.screenWidth) || 3840,
-      screenHeight: Number(message.screenHeight) || 2160,
-      videoSource: typeof message.videoSource === 'string' ? message.videoSource : undefined,
-      audioSource: typeof message.audioSource === 'string' ? message.audioSource : undefined,
-      layer: this.readMediaLayer(message.layer),
-    }
-    this.logicalWidth = plane.screenWidth
-    this.logicalHeight = plane.screenHeight
-    this.viewport.style.aspectRatio = `${this.logicalWidth} / ${this.logicalHeight}`
-    this.fitBroadcastCanvas()
+    this.canvas.applyScreenSize(plane.screenWidth, plane.screenHeight)
     this.onStatus?.(`映像 ${Math.round(plane.width)}×${Math.round(plane.height)}` +
       ` / 位置 ${Math.round(plane.x)},${Math.round(plane.y)}`)
     this.onMediaPlane?.(plane)
     this.onVideoPlane?.(plane)
-  }
-
-  private readMediaLayer(value: unknown): AribMediaPlaneLayer {
-    if (!value || typeof value !== 'object') {
-      return { documentOrder: -1, stackingPath: [] }
-    }
-    const layer = value as Partial<AribMediaPlaneLayer>
-    return {
-      documentOrder: Number(layer.documentOrder) || 0,
-      stackingPath: Array.isArray(layer.stackingPath) ? layer.stackingPath : [],
-      externalPlacement: layer.externalPlacement === 'above-application'
-        ? 'above-application'
-        : 'behind-application',
-    }
   }
 
   private postToRuntime(event: string, detail: Record<string, unknown> = {}): void {
@@ -773,27 +712,7 @@ export class AribReceiverHost {
     this.mediaPlaneAdapter?.unmountMediaPlane(reason)
   }
 
-  private fitBroadcastCanvas(): void {
-    const scale = Math.min(
-      this.viewport.clientWidth / this.logicalWidth,
-      this.viewport.clientHeight / this.logicalHeight,
-    )
-    this.iframe.style.width = `${this.logicalWidth}px`
-    this.iframe.style.height = `${this.logicalHeight}px`
-    this.iframe.style.transform = `scale(${scale})`
-  }
-
   private assertAlive(): void {
     if (this.destroyed) throw new Error('AribReceiverHost has been destroyed')
-  }
-
-  private applyReceiverBackgroundColor(): void {
-    // LCT is authoritative. The document stage is only a compatibility
-    // fallback while no LCT colour is available; black avoids exposing the
-    // embedding page behind an otherwise transparent receiver canvas.
-    this.viewport.style.backgroundColor = resolveReceiverBackgroundColor(
-      this.lctBackgroundColor,
-      this.stageBackgroundColor,
-    )
   }
 }

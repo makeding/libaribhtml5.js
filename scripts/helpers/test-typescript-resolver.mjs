@@ -8,5 +8,9 @@ export async function resolve(specifier, context, nextResolve) {
       (specifier === './external-media-hole' || specifier === './media-slot')) {
     return nextResolve(`${specifier}.ts`, context)
   }
+  if (context.parentURL?.endsWith('/src/receiver/canvas-controller.ts') &&
+      specifier === '../layout') {
+    return nextResolve(`${specifier}.ts`, context)
+  }
   return nextResolve(specifier, context)
 }
