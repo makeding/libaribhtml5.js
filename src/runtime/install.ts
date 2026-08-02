@@ -39,6 +39,7 @@ import {
 } from './application-boundary'
 import { installExternalNetworkPolicy } from './external-network'
 import { RuntimeMediaPlaneController } from './media-plane-runtime'
+import { RuntimeCaptionController } from './caption-controller'
 
 export type { ProgramInfo } from '../program-info'
 export type {
@@ -80,14 +81,6 @@ export type RuntimeApplicationInformation = {
   autostartPriority?: number
   /** Decoded loops from MH-AIT descriptor 0x802C. Omit when absent. */
   permissionManagedAreas?: readonly RuntimePermissionManagedArea[]
-}
-
-type CaptionListener = (data: string) => void
-
-type BroadcastObject = HTMLElement & {
-  isCaptionExistent?: (source: string) => boolean
-  addCaptionListener?: (listener: CaptionListener, source: string) => boolean
-  removeCaptionListener?: (listener: CaptionListener) => boolean
 }
 
 const keyValues: Record<string, number> = {
@@ -197,44 +190,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     options.resourceStore,
   )
   let programInfo: ProgramInfo | null = null
-  const captionTracks = new Set<number>()
-  const captionListeners = new Map<CaptionListener, number>()
-  const captionComponentTag = (source: string): number | null => {
-    const value = source.match(/\/([0-9a-f]{4})(?:[?#]|$)/i)?.[1]
-    return value === undefined ? null : Number.parseInt(value, 16)
-  }
-  const reportCaptionSubscriptions = () => {
-    postRuntime('caption-subscription', {
-      componentTags: [...new Set(captionListeners.values())],
-    })
-  }
-  const installBroadcastObjectApi = (object: BroadcastObject) => {
-    if (typeof object.isCaptionExistent !== 'function') {
-      object.isCaptionExistent = (source: string) => {
-        requirePermission(ARIB_PERMISSION_BITS.broadcastMedia)
-        const componentTag = captionComponentTag(source)
-        return componentTag !== null && captionTracks.has(componentTag)
-      }
-    }
-    if (typeof object.addCaptionListener !== 'function') {
-      object.addCaptionListener = (listener: CaptionListener, source: string) => {
-        requirePermission(ARIB_PERMISSION_BITS.broadcastMedia)
-        const componentTag = captionComponentTag(source)
-        if (typeof listener !== 'function' || componentTag === null) return false
-        captionListeners.set(listener, componentTag)
-        reportCaptionSubscriptions()
-        return true
-      }
-    }
-    if (typeof object.removeCaptionListener !== 'function') {
-      object.removeCaptionListener = (listener: CaptionListener) => {
-        requirePermission(ARIB_PERMISSION_BITS.broadcastMedia)
-        const removed = captionListeners.delete(listener)
-        if (removed) reportCaptionSubscriptions()
-        return removed
-      }
-    }
-  }
+  const captionController = new RuntimeCaptionController({
+    requirePermission: () => requirePermission(ARIB_PERMISSION_BITS.broadcastMedia),
+    postRuntime,
+  })
 
   let mediaPlaneRuntime: RuntimeMediaPlaneController
 
@@ -257,34 +216,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   target.addEventListener('message', (event) => {
     if (event.source !== target.parent || event.origin !== target.location.origin) return
     if (event.data?.type !== 'arib-host' || event.data.runtimeId !== runtimeId) return
-    if (event.data.event === 'caption-tracks') {
-      captionTracks.clear()
-      for (const value of event.data.componentTags ?? []) {
-        const componentTag = Number(value)
-        if (Number.isInteger(componentTag)) captionTracks.add(componentTag)
-      }
-      return
-    }
-    if (event.data.event === 'caption-reset') {
-      captionTracks.clear()
-      captionListeners.clear()
-      reportCaptionSubscriptions()
-      return
-    }
-    if (event.data.event === 'caption-data') {
-      const componentTag = Number(event.data.componentTag)
-      const payload = typeof event.data.payload === 'string'
-        ? event.data.payload
-        : JSON.stringify({
-            data_type: String(event.data.dataType ?? '0000'),
-            TMD: String(event.data.tmd ?? ''),
-            data: String(event.data.data ?? ''),
-          })
-      for (const [listener, registeredTag] of captionListeners) {
-        if (registeredTag === componentTag) listener(payload)
-      }
-      return
-    }
+    if (captionController.handleHostMessage(event.data)) return
     if (event.data.event === 'program-info') {
       try {
         programInfo = event.data.value === null
@@ -594,7 +526,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       target.location.href,
       ARIB_PERMISSION_BITS.broadcastMedia,
     ),
-    installBroadcastObjectApi: object => installBroadcastObjectApi(object as BroadcastObject),
+    installBroadcastObjectApi: captionController.installBroadcastObjectApi,
     postRuntime,
   })
 

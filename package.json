@@ -56,7 +56,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --experimental-strip-types scripts/test-runtime-contracts.mjs && node --experimental-strip-types scripts/test-external-network.mjs && node --experimental-strip-types scripts/test-receiver-protocol.mjs && node --experimental-strip-types scripts/test-receiver-canvas.mjs && node --experimental-strip-types scripts/test-media-plane-characterization.mjs && node --experimental-strip-types scripts/test-vfs-worker.mjs",
+    "test": "node --experimental-strip-types scripts/test-runtime-contracts.mjs && node --experimental-strip-types scripts/test-external-network.mjs && node --experimental-strip-types scripts/test-caption-controller.mjs && node --experimental-strip-types scripts/test-receiver-protocol.mjs && node --experimental-strip-types scripts/test-receiver-canvas.mjs && node --experimental-strip-types scripts/test-media-plane-characterization.mjs && node --experimental-strip-types scripts/test-vfs-worker.mjs",
     "build": "tsc --noEmit && vite build && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs",
     "build:sdk": "tsc --noEmit && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs && npm run build:types",
     "build:types": "tsc -p tsconfig.build.json && node scripts/rewrite-declaration-imports.mjs",
