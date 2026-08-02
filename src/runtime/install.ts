@@ -32,14 +32,16 @@ import {
 } from './stream-event'
 import {
   ARIB_PERMISSION_BITS,
-  AribApplicationBoundaryPolicy,
-  type AribPermissionManagedArea,
   type AribPermissionBit,
   type RuntimePermissionManagedArea,
 } from './application-boundary'
 import { installExternalNetworkPolicy } from './external-network'
 import { RuntimeMediaPlaneController } from './media-plane-runtime'
 import { RuntimeCaptionController } from './caption-controller'
+import {
+  RuntimeApplicationController,
+  type RuntimeApplicationInformation,
+} from './application-controller'
 
 export type { ProgramInfo } from '../program-info'
 export type {
@@ -51,6 +53,7 @@ export type {
   AribPermissionManagedArea,
   RuntimePermissionManagedArea,
 } from './application-boundary'
+export type { RuntimeApplicationInformation } from './application-controller'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
@@ -71,16 +74,6 @@ export type RuntimeOptions = {
   getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
   /** MH-AIT metadata for the application which owns this document. */
   application?: RuntimeApplicationInformation
-}
-
-export type RuntimeApplicationInformation = {
-  type?: string
-  organizationId?: number
-  applicationId?: number
-  controlCode?: string
-  autostartPriority?: number
-  /** Decoded loops from MH-AIT descriptor 0x802C. Omit when absent. */
-  permissionManagedAreas?: readonly RuntimePermissionManagedArea[]
 }
 
 const keyValues: Record<string, number> = {
@@ -147,22 +140,6 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     const documentRelative = new URL(String(value ?? ''), target.location.href)
     return resolveBroadcastUrl(documentRelative, broadcastBaseUrl, broadcastRootUrl)
   }
-  let applicationInformation: RuntimeApplicationInformation = { ...options.application }
-  const applicationBoundary = new AribApplicationBoundaryPolicy(
-    broadcastBaseUrl,
-    target.location.href,
-    applicationInformation.permissionManagedAreas,
-  )
-  const notAuthorized = (): Error => {
-    const error = new Error('Not authorized') as Error & { code?: string }
-    error.name = 'Error'
-    error.code = 'NOT_AUTHORIZED_ERR'
-    return error
-  }
-  const requirePermission = (bit: AribPermissionBit): void => {
-    if (!applicationBoundary.permits(target.location.href, bit)) throw notAuthorized()
-  }
-
   const runtimeId = target.crypto.randomUUID?.() ??
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   const postRuntime = (event: string, detail: Record<string, unknown> = {}) => {
@@ -172,6 +149,17 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       event,
       ...detail,
     }, '*')
+  }
+  const applicationController = new RuntimeApplicationController({
+    target,
+    broadcastBaseUrl,
+    resolveRuntimeUrl,
+    allowExternalNetwork: options.allowExternalNetwork ?? false,
+    application: options.application,
+    postRuntime,
+  })
+  const requirePermission = (bit: AribPermissionBit): void => {
+    applicationController.requirePermission(bit)
   }
 
   installExternalNetworkPolicy(target, options.allowExternalNetwork)
@@ -196,23 +184,6 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   })
 
   let mediaPlaneRuntime: RuntimeMediaPlaneController
-
-  let applyApplicationInformation: (value: RuntimeApplicationInformation) => void = () => {}
-  let applicationVisible = true
-  let applicationInputActive = false
-  const applyApplicationVisibility = () => {
-    target.document.documentElement.style.setProperty(
-      'visibility',
-      applicationVisible ? 'visible' : 'hidden',
-      'important',
-    )
-  }
-  const reportApplicationPresentation = () => {
-    postRuntime('application-presentation', {
-      visible: applicationVisible,
-      inputActive: applicationInputActive,
-    })
-  }
   target.addEventListener('message', (event) => {
     if (event.source !== target.parent || event.origin !== target.location.origin) return
     if (event.data?.type !== 'arib-host' || event.data.runtimeId !== runtimeId) return
@@ -231,14 +202,20 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }
     if (event.data.event === 'application-information') {
       try {
-        applyApplicationInformation(event.data.value ?? {})
+        const withinBoundary = applicationController.updateApplicationInformation(
+          event.data.value ?? {},
+        )
+        mediaPlaneRuntime.schedule()
+        if (!withinBoundary) {
+          postRuntime('application-boundary-exit', { url: target.location.href })
+        }
       } catch (error) {
         postRuntime('error', { message: `Invalid application information: ${String(error)}` })
       }
       return
     }
     if (event.data.event === 'receiver-input-state') {
-      applicationInputActive = Boolean(event.data.active)
+      applicationController.setHostInputActive(Boolean(event.data.active))
       return
     }
     if (event.data.event === 'resource-change') {
@@ -254,153 +231,6 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         if (runtimeEventMatchesSelector(value, listener.selector)) listener.callback(value)
       }
     }
-  })
-
-  const keySet = {
-    RED: 1 << 0,
-    GREEN: 1 << 1,
-    YELLOW: 1 << 2,
-    BLUE: 1 << 3,
-    NAVIGATION: 1 << 4,
-    DBUTTON: 1 << 5,
-    value: 0,
-    setValue(value: number) {
-      this.value = value
-      return true
-    },
-  }
-
-  const reportBlockedNavigation = (value: unknown) => {
-    let url = String(value ?? '')
-    try {
-      url = new URL(url, target.location.href).href
-    } catch {
-      // Keep the original value for diagnostics.
-    }
-    postRuntime('navigation-blocked', {
-      url,
-    })
-  }
-  const allowedNavigationUrl = (value: unknown): URL | null => {
-    try {
-      const url = resolveRuntimeUrl(value)
-      if (!/^https?:$/.test(url.protocol)) return null
-      if (url.origin !== target.location.origin && !options.allowExternalNetwork) return null
-      return applicationBoundary.evaluate(url).withinBoundary ? url : null
-    } catch {
-      return null
-    }
-  }
-  const installNavigationPolicy = () => {
-    const nhksh = target.nhksh as Record<string, unknown> | undefined
-    if (!nhksh || typeof nhksh.lu !== 'function' || nhksh.__navigationGuarded) return
-    const navigate = nhksh.lu as (url: string, ...args: unknown[]) => unknown
-    nhksh.lu = (url: string, ...args: unknown[]) => {
-      const resolved = allowedNavigationUrl(url)
-      if (!resolved) {
-        reportBlockedNavigation(url)
-        return false
-      }
-      return navigate.call(nhksh, resolved.href, ...args)
-    }
-    nhksh.__navigationGuarded = true
-  }
-
-  const boundaryDescriptor = {
-    getCurrentBoundary: () => {
-      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
-      return applicationBoundary.getCurrentBoundary()
-    },
-    addPermissionManagedArea: (area: AribPermissionManagedArea) => {
-      requirePermission(ARIB_PERMISSION_BITS.boundaryExtension)
-      applicationBoundary.addPermissionManagedArea(area)
-    },
-  }
-  const ownerApplication = {
-    type: applicationInformation.type ?? '',
-    organization_id: applicationInformation.organizationId ?? 0,
-    application_id: applicationInformation.applicationId ?? 0,
-    control_code: applicationInformation.controlCode ?? '',
-    autostart_priority: applicationInformation.autostartPriority ?? 0,
-    keySet,
-    show: () => {
-      applicationVisible = true
-      applyApplicationVisibility()
-      reportApplicationPresentation()
-      return true
-    },
-    hide: () => {
-      applicationVisible = false
-      applyApplicationVisibility()
-      reportApplicationPresentation()
-      return true
-    },
-    activateInput: () => {
-      applicationInputActive = true
-      reportApplicationPresentation()
-      return true
-    },
-    deactivateInput: () => {
-      applicationInputActive = false
-      reportApplicationPresentation()
-      return true
-    },
-    createApplication: (url: string) => {
-      const resolved = allowedNavigationUrl(url)
-      if (!resolved) {
-        reportBlockedNavigation(url)
-        return null
-      }
-      target.location.href = resolved.href
-      return ownerApplication
-    },
-    destroyApplication: () => {
-      postRuntime('destroy')
-    },
-    replaceApplication: (
-      organizationId: number,
-      applicationId: number,
-      aitUrl: string | null = null,
-    ) => {
-      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
-      if (!Number.isSafeInteger(organizationId) || organizationId < 0 ||
-          !Number.isSafeInteger(applicationId) || applicationId < 0) {
-        postRuntime('error', { message: 'Invalid replaceApplication application identifier' })
-        return
-      }
-      postRuntime('replace-application', {
-        organizationId,
-        applicationId,
-        aitUrl: aitUrl === null ? null : String(aitUrl),
-      })
-    },
-    exitFromManagedState: (url: string) => {
-      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
-      postRuntime('exit-managed-state', { url: String(url ?? '') })
-    },
-    getApplicationBoundaryAndPermissionDescriptor: () => {
-      requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
-      return applicationBoundary.hasDescriptor() ? boundaryDescriptor : null
-    },
-  }
-
-  applyApplicationInformation = (value: RuntimeApplicationInformation) => {
-    const next = { ...value }
-    applicationBoundary.update(next.permissionManagedAreas)
-    applicationInformation = next
-    ownerApplication.type = applicationInformation.type ?? ''
-    ownerApplication.organization_id = applicationInformation.organizationId ?? 0
-    ownerApplication.application_id = applicationInformation.applicationId ?? 0
-    ownerApplication.control_code = applicationInformation.controlCode ?? ''
-    ownerApplication.autostart_priority = applicationInformation.autostartPriority ?? 0
-    mediaPlaneRuntime.schedule()
-    if (!applicationBoundary.evaluate(target.location.href).withinBoundary) {
-      postRuntime('application-boundary-exit', { url: target.location.href })
-    }
-  }
-
-  defineNavigatorProperty(target.navigator, 'applicationManager', {
-    getOwnerApplication: () => ownerApplication,
   })
 
   const systemInformation = createReceiverSystemInformation(
@@ -522,8 +352,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   mediaPlaneRuntime = new RuntimeMediaPlaneController({
     target,
     adapter: options.mediaPlaneAdapter,
-    canUseBroadcastMedia: () => applicationBoundary.permits(
-      target.location.href,
+    canUseBroadcastMedia: () => applicationController.permits(
       ARIB_PERMISSION_BITS.broadcastMedia,
     ),
     installBroadcastObjectApi: captionController.installBroadcastObjectApi,
@@ -531,7 +360,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   })
 
   const startDocumentRuntime = () => {
-    installNavigationPolicy()
+    applicationController.startDocument()
     // Static objects need their receiver API before application ready listeners run.
     // Stage sampling remains deferred to the controller's first animation frame.
     mediaPlaneRuntime.startDocument()
@@ -547,21 +376,12 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   } else {
     queueMicrotask(startDocumentRuntime)
   }
-  target.document.addEventListener('click', (event) => {
-    const element = event.target instanceof target.Element ? event.target : null
-    const anchor = element?.closest<HTMLAnchorElement>('a[href]')
-    if (!anchor) return
-    const resolved = allowedNavigationUrl(anchor.href)
-    if (resolved && resolved.href === anchor.href) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    if (resolved) target.location.href = resolved.href
-    else reportBlockedNavigation(anchor.href)
-  }, true)
+  applicationController.startNavigationCapture()
   mediaPlaneRuntime.startObserving()
 
   target.addEventListener('pagehide', () => {
     mediaPlaneRuntime.dispose('document-unload', () => resourceCache.dispose())
+    applicationController.dispose()
     postRuntime('unloading', { url: target.location.href })
   })
 
