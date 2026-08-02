@@ -1,12 +1,7 @@
 import { installRomSoundProtocol } from './romsound.ts'
 import { installAribSymbolFont } from './fonts'
 import { installBroadcastClock, type BroadcastNowProvider } from './clock'
-import type {
-  AribMediaPlane,
-  AribMediaPlaneAdapter,
-  AribMediaPlaneStackEntry,
-} from '../media-plane'
-import { resolveBroadcastMediaSlot } from './media-slot'
+import type { AribMediaPlaneAdapter } from '../media-plane'
 import {
   deriveBroadcastRootUrl,
   normalizeBroadcastBaseUrl,
@@ -42,6 +37,8 @@ import {
   type AribPermissionBit,
   type RuntimePermissionManagedArea,
 } from './application-boundary'
+import { installExternalNetworkPolicy } from './external-network'
+import { RuntimeMediaPlaneController } from './media-plane-runtime'
 
 export type { ProgramInfo } from '../program-info'
 export type {
@@ -184,62 +181,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     }, '*')
   }
 
-  // Broadcast resources are mounted on the receiver-managed origin. External
-  // HTTP access represents the optional communication path and must fail
-  // immediately when the host is offline; otherwise broadcaster connection
-  // probes commonly wait for their full multi-second timeout.
-  if (!options.allowExternalNetwork) {
-    const isExternalUrl = (value: unknown): boolean => {
-      try {
-        const url = new URL(String(value), target.location.href)
-        return /^https?:$/.test(url.protocol) && url.origin !== target.location.origin
-      } catch {
-        return false
-      }
-    }
-
-    const xhrPrototype = target.XMLHttpRequest?.prototype
-    if (xhrPrototype) {
-      const blockedRequests = new WeakSet<XMLHttpRequest>()
-      const open = xhrPrototype.open
-      const send = xhrPrototype.send
-      Object.defineProperty(xhrPrototype, 'open', {
-        configurable: true,
-        writable: true,
-        value: function(this: XMLHttpRequest, method: string, url: string | URL, ...args: unknown[]) {
-          if (isExternalUrl(url)) blockedRequests.add(this)
-          else blockedRequests.delete(this)
-          return Reflect.apply(open, this, [method, url, ...args])
-        },
-      })
-      Object.defineProperty(xhrPrototype, 'send', {
-        configurable: true,
-        writable: true,
-        value: function(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-          if (!blockedRequests.has(this)) return send.call(this, body)
-          target.queueMicrotask(() => this.dispatchEvent(new target.ProgressEvent('error')))
-        },
-      })
-    }
-
-    const fetch = target.fetch?.bind(target)
-    if (fetch) {
-      target.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = input instanceof target.Request ? input.url : input
-        if (isExternalUrl(url)) return Promise.reject(new TypeError('External network is offline'))
-        return fetch(input, init)
-      }
-    }
-
-    if (typeof target.navigator.sendBeacon === 'function') {
-      const sendBeacon = target.navigator.sendBeacon.bind(target.navigator)
-      Object.defineProperty(target.navigator, 'sendBeacon', {
-        configurable: true,
-        value: (url: string | URL, data?: BodyInit | null) =>
-          isExternalUrl(url) ? false : sendBeacon(url, data),
-      })
-    }
-  }
+  installExternalNetworkPolicy(target, options.allowExternalNetwork)
 
   for (const [name, value] of Object.entries(keyValues)) target[name] = value
 
@@ -293,6 +235,8 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       }
     }
   }
+
+  let mediaPlaneRuntime: RuntimeMediaPlaneController
 
   let applyApplicationInformation: (value: RuntimeApplicationInformation) => void = () => {}
   let applicationVisible = true
@@ -517,7 +461,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     ownerApplication.application_id = applicationInformation.applicationId ?? 0
     ownerApplication.control_code = applicationInformation.controlCode ?? ''
     ownerApplication.autostart_priority = applicationInformation.autostartPriority ?? 0
-    scheduleMediaPlaneReport()
+    mediaPlaneRuntime.schedule()
     if (!applicationBoundary.evaluate(target.location.href).withinBoundary) {
       postRuntime('application-boundary-exit', { url: target.location.href })
     }
@@ -643,390 +587,22 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     },
   })
 
-  const reportStageStyle = () => {
-    const body = target.document.body
-    const style = target.getComputedStyle(body ?? target.document.documentElement)
-    let backgroundColor = style.backgroundColor
-    const canvasRect = body?.getBoundingClientRect()
-    if (canvasRect && canvasRect.width > 0 && canvasRect.height > 0) {
-      const tolerance = 1
-      for (const element of target.document.querySelectorAll<HTMLElement>('body *')) {
-        const candidateStyle = target.getComputedStyle(element)
-        if (candidateStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ||
-            candidateStyle.backgroundColor === 'transparent') continue
-        const rect = element.getBoundingClientRect()
-        if (rect.width <= 0 || rect.height <= 0 ||
-            rect.left > canvasRect.left + tolerance ||
-            rect.top > canvasRect.top + tolerance ||
-            rect.right < canvasRect.right - tolerance ||
-            rect.bottom < canvasRect.bottom - tolerance) continue
-        // Caption applications commonly put the real black stage in a
-        // full-canvas #backscreen while leaving body white. Preserve that
-        // stage below the external video before the media hole clears it.
-        backgroundColor = candidateStyle.backgroundColor
-        break
-      }
-    }
-    postRuntime('stage-style', {
-      backgroundColor,
-    })
-  }
-  const prepareExternalMediaPlaneCanvas = () => {
-    if (options.mediaPlaneAdapter?.renderMode !== 'external') return
-    // Chromium paints an opaque iframe canvas when the used color scheme of
-    // the owner iframe and this document root differ. Broadcast applications
-    // predate page color-scheme negotiation, so pin the child side to the
-    // receiver's light canvas instead of inheriting the host's dark preference.
-    target.document.documentElement.style.setProperty('color-scheme', 'only light', 'important')
-    target.document.documentElement.style.setProperty('background', 'transparent', 'important')
-    if (target.document.body) {
-      target.document.body.style.setProperty('background', 'transparent', 'important')
-    }
-  }
-  const mediaPlaneAdapter = options.mediaPlaneAdapter
-  const mediaObjectIds = new WeakMap<HTMLElement, string>()
-  const externalPlaceholderOpacities = new Map<HTMLElement, {
-    value: string
-    priority: string
-    computed: number
-  }>()
-  const externalBackgrounds = new Map<HTMLElement, {
-    color: { value: string; priority: string }
-    image: { value: string; priority: string }
-  }>()
-  let nextMediaObjectId = 1
-  let activeMediaObject: HTMLElement | null = null
-  let lastMediaPlane = ''
-  let stageStyleReported = false
-  let observedMediaObject: HTMLElement | null = null
-  let mediaPlaneFrame: number | null = null
-  let reportMediaPlane = () => undefined
-  const activeMediaAnimation = (): boolean => {
-    const mediaObject = activeMediaObject
-    if (!mediaObject || typeof target.document.getAnimations !== 'function') return false
-    return target.document.getAnimations().some(animation => {
-      if (animation.playState !== 'running') return false
-      const animated = (animation.effect as KeyframeEffect | null)?.target
-      return animated instanceof target.Element && (
-        animated === mediaObject || animated.contains(mediaObject) || mediaObject.contains(animated)
-      )
-    })
-  }
-  const scheduleMediaPlaneReport = () => {
-    if (mediaPlaneFrame !== null) return
-    mediaPlaneFrame = target.requestAnimationFrame(() => {
-      mediaPlaneFrame = null
-      reportMediaPlane()
-      if (activeMediaAnimation()) scheduleMediaPlaneReport()
-    })
-  }
-  const mediaPlaneResizeObserver = typeof target.ResizeObserver === 'function'
-    ? new target.ResizeObserver(scheduleMediaPlaneReport)
-    : null
-  const observeMediaObject = (object: HTMLElement | null) => {
-    if (object === observedMediaObject) return
-    if (observedMediaObject) mediaPlaneResizeObserver?.unobserve(observedMediaObject)
-    observedMediaObject = object
-    if (object) mediaPlaneResizeObserver?.observe(object)
-  }
-  const logicalViewport = () => {
-    const content = target.document.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content ?? ''
-    const width = Number(content.match(/(?:^|,)\s*width\s*=\s*(\d+)/i)?.[1] ?? 3840)
-    const height = Number(content.match(/(?:^|,)\s*height\s*=\s*(\d+)/i)?.[1] ?? 2160)
-    return { width, height }
-  }
-  const slotIdFor = (object: HTMLElement): string => {
-    const existing = mediaObjectIds.get(object)
-    if (existing) return existing
-    const slotId = `media-plane-${nextMediaObjectId++}`
-    mediaObjectIds.set(object, slotId)
-    return slotId
-  }
-  const describeStackingPath = (object: HTMLElement): AribMediaPlaneStackEntry[] => {
-    const path: AribMediaPlaneStackEntry[] = []
-    let element: HTMLElement | null = object
-    while (element) {
-      const style = target.getComputedStyle(element)
-      path.push({
-        tagName: element.tagName.toLowerCase(),
-        ...(element.id ? { id: element.id } : {}),
-        position: style.position,
-        zIndex: style.zIndex,
-        display: style.display,
-        visibility: style.visibility,
-        opacity: externalPlaceholderOpacities.get(element)?.computed ?? Number(style.opacity),
-        transform: style.transform,
-      })
-      element = element.parentElement
-    }
-    return path.reverse()
-  }
-  const externalPlaceholderElements = (object: HTMLElement): HTMLElement[] => {
-    const elements = [object]
-    const slot = resolveBroadcastMediaSlot(object)
-    const objectRect = slot.rect
-    const tolerance = 1
-    let child = object
-    for (let parent = object.parentElement;
-      parent && parent !== target.document.body &&
-      parent !== target.document.documentElement;
-      parent = parent.parentElement) {
-      const rect = parent.getBoundingClientRect()
-      const isMediaOnlyWrapper = parent.children.length === 1 &&
-        parent.firstElementChild === child &&
-        (parent === slot.element || (
-          Math.abs(rect.left - objectRect.left) <= tolerance &&
-          Math.abs(rect.top - objectRect.top) <= tolerance &&
-          Math.abs(rect.width - objectRect.width) <= tolerance &&
-          Math.abs(rect.height - objectRect.height) <= tolerance
-        ))
-      if (!isMediaOnlyWrapper) break
-      elements.push(parent)
-      child = parent
-    }
-    return elements
-  }
-  const restoreExternalPlaceholder = (element: HTMLElement) => {
-    const original = externalPlaceholderOpacities.get(element)
-    if (!original) return
-    if (original.value) element.style.setProperty('opacity', original.value, original.priority)
-    else element.style.removeProperty('opacity')
-    externalPlaceholderOpacities.delete(element)
-  }
-  const setExternalPlaceholder = (object: HTMLElement, enabled: boolean) => {
-    if (!enabled) {
-      for (const element of [...externalPlaceholderOpacities.keys()]) {
-        restoreExternalPlaceholder(element)
-      }
-      return
-    }
-
-    const desired = new Set(externalPlaceholderElements(object))
-    for (const element of [...externalPlaceholderOpacities.keys()]) {
-      if (!desired.has(element)) restoreExternalPlaceholder(element)
-    }
-    for (const element of desired) {
-      if (!externalPlaceholderOpacities.has(element)) {
-        externalPlaceholderOpacities.set(element, {
-          value: element.style.getPropertyValue('opacity'),
-          priority: element.style.getPropertyPriority('opacity'),
-          computed: Number(target.getComputedStyle(element).opacity),
-        })
-      }
-      if (element.style.getPropertyValue('opacity') !== '0' ||
-          element.style.getPropertyPriority('opacity') !== 'important') {
-        element.style.setProperty('opacity', '0', 'important')
-      }
-    }
-  }
-  const restoreExternalBackground = (element: HTMLElement) => {
-    const original = externalBackgrounds.get(element)
-    if (!original) return
-    for (const [property, value] of [
-      ['background-color', original.color],
-      ['background-image', original.image],
-    ] as const) {
-      if (value.value) element.style.setProperty(property, value.value, value.priority)
-      else element.style.removeProperty(property)
-    }
-    externalBackgrounds.delete(element)
-  }
-  const restoreExternalBackgrounds = () => {
-    for (const element of [...externalBackgrounds.keys()]) {
-      restoreExternalBackground(element)
-    }
-  }
-  const setExternalMediaHole = (object: HTMLElement, enabled: boolean) => {
-    setExternalPlaceholder(object, enabled)
-    if (!enabled) {
-      restoreExternalBackgrounds()
-      return
-    }
-
-    // An external video surface sits below the iframe. Making only the media
-    // object transparent is insufficient when an ancestor or another
-    // application layer paints an opaque rectangle over the media slot.
-    // Clear backgrounds only; element content remains on the application plane.
-    const desired = new Set<HTMLElement>()
-    for (let element = object.parentElement;
-      element && element !== target.document.body &&
-      element !== target.document.documentElement;
-      element = element.parentElement) {
-      const style = target.getComputedStyle(element)
-      if (!externalBackgrounds.has(element) &&
-          (style.backgroundColor === 'rgba(0, 0, 0, 0)' ||
-           style.backgroundColor === 'transparent') &&
-          style.backgroundImage === 'none') continue
-      desired.add(element)
-    }
-    const objectRect = resolveBroadcastMediaSlot(object).rect
-    const coversMediaSlot = (element: HTMLElement) => {
-      const rect = element.getBoundingClientRect()
-      const tolerance = 1
-      return rect.width > 0 && rect.height > 0 &&
-        rect.left <= objectRect.left + tolerance &&
-        rect.top <= objectRect.top + tolerance &&
-        rect.right >= objectRect.right - tolerance &&
-        rect.bottom >= objectRect.bottom - tolerance
-    }
-    for (const element of target.document.querySelectorAll<HTMLElement>('body *')) {
-      if (element === object || element.contains(object) || object.contains(element)) continue
-      const style = target.getComputedStyle(element)
-      // A background cleared by this runtime is now computed as transparent.
-      // Keep tracking it while it still covers the media slot; otherwise the
-      // next observer pass would restore it, then clear it again forever.
-      if (!externalBackgrounds.has(element) &&
-          (style.backgroundColor === 'rgba(0, 0, 0, 0)' ||
-           style.backgroundColor === 'transparent') &&
-          style.backgroundImage === 'none') continue
-      // Only the background paint is removed. Text, controls and transparent
-      // overlays such as a caption debug layer remain in the iframe.
-      if (coversMediaSlot(element)) desired.add(element)
-    }
-    for (const element of [...externalBackgrounds.keys()]) {
-      if (!desired.has(element)) restoreExternalBackground(element)
-    }
-    for (const element of desired) {
-      if (externalBackgrounds.has(element)) continue
-      externalBackgrounds.set(element, {
-        color: {
-          value: element.style.getPropertyValue('background-color'),
-          priority: element.style.getPropertyPriority('background-color'),
-        },
-        image: {
-          value: element.style.getPropertyValue('background-image'),
-          priority: element.style.getPropertyPriority('background-image'),
-        },
-      })
-      element.style.setProperty('background-color', 'transparent', 'important')
-      element.style.setProperty('background-image', 'none', 'important')
-    }
-  }
-  const callMediaPlaneAdapter = (callback: () => void) => {
-    try {
-      callback()
-    } catch (error) {
-      postRuntime('error', {
-        message: `Media-plane adapter failed: ${String(error)}`,
-      })
-    }
-  }
-  const unmountMediaPlane = (reason: 'slot-removed' | 'document-unload') => {
-    if (activeMediaObject) setExternalMediaHole(activeMediaObject, false)
-    else restoreExternalBackgrounds()
-    if (mediaPlaneAdapter) {
-      callMediaPlaneAdapter(() => mediaPlaneAdapter.unmountMediaPlane(reason))
-    }
-    activeMediaObject = null
-  }
-  reportMediaPlane = () => {
-    // Sample the receiver background on the first animation frame after the
-    // document is ready.  Several broadcast applications select their 4K/8K
-    // theme from a DOM-ready callback; sampling in the same microtask as
-    // DOMContentLoaded captures the transient default (commonly white).
-    // This must also run before setExternalMediaHole() clears application
-    // backgrounds for the external video plane.
-    if (!stageStyleReported && target.document.readyState !== 'loading') {
-      reportStageStyle()
-      stageStyleReported = true
-    }
-    const object = applicationBoundary.permits(
+  mediaPlaneRuntime = new RuntimeMediaPlaneController({
+    target,
+    adapter: options.mediaPlaneAdapter,
+    canUseBroadcastMedia: () => applicationBoundary.permits(
       target.location.href,
       ARIB_PERMISSION_BITS.broadcastMedia,
-    )
-      ? target.document.querySelector<HTMLElement>(
-          'object[type="video/x-arib2-broadcast"], ' +
-          'object[data-arib-type="video/x-arib2-broadcast"]',
-        )
-      : null
-    if (!object) {
-      observeMediaObject(null)
-      const removedSlotId = activeMediaObject ? slotIdFor(activeMediaObject) : ''
-      if (activeMediaObject) unmountMediaPlane('slot-removed')
-      const screen = logicalViewport()
-      const plane: AribMediaPlane = {
-        slotId: removedSlotId,
-        visible: false,
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        screenWidth: screen.width,
-        screenHeight: screen.height,
-        layer: { documentOrder: -1, stackingPath: [] },
-      }
-      const message = JSON.stringify(plane)
-      if (message !== lastMediaPlane) {
-        lastMediaPlane = message
-        postRuntime('media-plane', plane)
-      }
-      return
-    }
-    observeMediaObject(object)
-    installBroadcastObjectApi(object as BroadcastObject)
-    const slot = resolveBroadcastMediaSlot(object)
-    const rect = slot.rect
-    const style = target.getComputedStyle(object)
-    const videoSource = object.querySelector<HTMLParamElement>('param[name="video_src"]')?.value
-    const audioSource = object.querySelector<HTMLParamElement>('param[name="audio_src"]')?.value
-    const screen = logicalViewport()
-    const stackingPath = describeStackingPath(object)
-    const plane: AribMediaPlane = {
-      slotId: slotIdFor(object),
-      visible: style.display !== 'none' && style.visibility !== 'hidden' &&
-        rect.width > 0 && rect.height > 0 &&
-        stackingPath.every((entry) => entry.display !== 'none' &&
-          entry.visibility !== 'hidden' && entry.opacity > 0),
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      screenWidth: screen.width,
-      screenHeight: screen.height,
-      videoSource,
-      audioSource,
-      layer: {
-        documentOrder: Array.from(target.document.querySelectorAll('*')).indexOf(object),
-        stackingPath,
-        externalPlacement: slot.element !== object &&
-          Number.parseInt(target.getComputedStyle(slot.element).zIndex, 10) > 0
-          ? 'above-application'
-          : 'behind-application',
-      },
-    }
-    const message = JSON.stringify(plane)
-    if (object !== activeMediaObject) {
-      if (activeMediaObject) unmountMediaPlane('slot-removed')
-      activeMediaObject = object
-      if (mediaPlaneAdapter) {
-        callMediaPlaneAdapter(() => mediaPlaneAdapter.mountMediaPlane(object, plane))
-      }
-    } else if (message !== lastMediaPlane && mediaPlaneAdapter) {
-      callMediaPlaneAdapter(() => mediaPlaneAdapter.updateMediaPlane(object, plane))
-    }
-    setExternalMediaHole(object, (mediaPlaneAdapter?.renderMode ?? 'external') === 'external')
-    if (message === lastMediaPlane) return
-    lastMediaPlane = message
-    postRuntime('media-plane', plane)
-  }
+    ),
+    installBroadcastObjectApi: object => installBroadcastObjectApi(object as BroadcastObject),
+    postRuntime,
+  })
+
   const startDocumentRuntime = () => {
     installNavigationPolicy()
-    // Static broadcast objects must have their receiver API before later
-    // DOMContentLoaded/ready listeners call isCaptionExistent().  Stage
-    // sampling is intentionally left to the scheduled animation-frame report
-    // below, after application ready callbacks have selected their theme.
-    const object = applicationBoundary.permits(
-      target.location.href,
-      ARIB_PERMISSION_BITS.broadcastMedia,
-    )
-      ? target.document.querySelector<HTMLElement>(
-          'object[type="video/x-arib2-broadcast"], ' +
-          'object[data-arib-type="video/x-arib2-broadcast"]',
-        )
-      : null
-    if (object) installBroadcastObjectApi(object as BroadcastObject)
-    prepareExternalMediaPlaneCanvas()
-    scheduleMediaPlaneReport()
+    // Static objects need their receiver API before application ready listeners run.
+    // Stage sampling remains deferred to the controller's first animation frame.
+    mediaPlaneRuntime.startDocument()
   }
 
   // Establish the host session before observing the parser.  A broadcast
@@ -1050,31 +626,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     if (resolved) target.location.href = resolved.href
     else reportBlockedNavigation(anchor.href)
   }, true)
-  const mediaPlaneMutationObserver = new target.MutationObserver(scheduleMediaPlaneReport)
-  mediaPlaneMutationObserver.observe(target.document.documentElement, {
-    attributes: true,
-    attributeFilter: ['class', 'style', 'type', 'data-arib-type', 'name', 'value'],
-    childList: true,
-    subtree: true,
-  })
-  mediaPlaneResizeObserver?.observe(target.document.documentElement)
-  target.addEventListener('resize', scheduleMediaPlaneReport)
-  for (const event of ['animationstart', 'animationend', 'animationcancel',
-    'transitionrun', 'transitionend', 'transitioncancel']) {
-    target.document.addEventListener(event, scheduleMediaPlaneReport, true)
-  }
-  // Also synchronize once after the installed message even when the document
-  // has already been parsed and no mutation follows runtime installation.
-  queueMicrotask(scheduleMediaPlaneReport)
+  mediaPlaneRuntime.startObserving()
 
   target.addEventListener('pagehide', () => {
-    if (mediaPlaneFrame !== null) target.cancelAnimationFrame(mediaPlaneFrame)
-    mediaPlaneFrame = null
-    mediaPlaneMutationObserver.disconnect()
-    mediaPlaneResizeObserver?.disconnect()
-    target.removeEventListener('resize', scheduleMediaPlaneReport)
-    resourceCache.dispose()
-    unmountMediaPlane('document-unload')
+    mediaPlaneRuntime.dispose('document-unload', () => resourceCache.dispose())
     postRuntime('unloading', { url: target.location.href })
   })
 
