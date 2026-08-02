@@ -42,6 +42,7 @@ import {
   type RuntimeMessage,
 } from './receiver/protocol'
 import { ReceiverCanvasController } from './receiver/canvas-controller'
+import { RuntimeSessionController } from './receiver/runtime-session-controller'
 import type {
   AribApplicationInformation,
   AribApplicationReplaceHandler,
@@ -102,16 +103,14 @@ export class AribReceiverHost {
   private readonly onViewerParticipation?: (event: AribViewerParticipationEvent) => void
   private readonly viewerParticipation = new ViewerParticipationController()
   private readonly canvas: ReceiverCanvasController
-  private activeRuntimeId: string | null = null
+  private readonly runtimeSession: RuntimeSessionController
   private captionComponentTags: number[] = []
   private applicationInformation: AribApplicationInformation = {}
   private programInfo: ProgramInfo | null = null
-  private readonly pendingStreamEvents: RuntimeEvent[] = []
   private broadcastClock: (AribBroadcastClock & { monotonicMilliseconds: number }) | null = null
   private video: HTMLVideoElement | null = null
   private mediaPlaneEnabled = false
   private applicationExited = false
-  private applicationLoadTimer: number | null = null
   private destroyed = false
 
   constructor(options: AribReceiverHostOptions) {
@@ -185,6 +184,13 @@ export class AribReceiverHost {
       iframe: this.iframe,
       viewport: this.viewport,
     })
+    this.runtimeSession = new RuntimeSessionController({
+      ownerWindow: this.ownerWindow,
+      iframe: this.iframe,
+      origin: this.origin,
+      applicationLoadTimeoutMs: this.applicationLoadTimeoutMs,
+      onApplicationLoadTimeout: url => this.failApplicationLoad(url),
+    })
   }
 
   installRuntime(target: RuntimeWindow): void {
@@ -213,7 +219,9 @@ export class AribReceiverHost {
         managedUrls: area.managedUrls === null ? null : [...area.managedUrls],
       })),
     } : {}
-    this.postToRuntime('application-information', { value: this.applicationInformation })
+    this.runtimeSession.postToRuntime('application-information', {
+      value: this.applicationInformation,
+    })
   }
 
   /**
@@ -255,7 +263,7 @@ export class AribReceiverHost {
     this.onLifecycle?.({ type: 'loading', url: resolved.href })
     resolved.searchParams.set('runtime', Date.now().toString())
     this.iframe.src = resolved.href
-    this.armApplicationLoadTimer(resolved.href)
+    this.runtimeSession.armWatchdog(resolved.href)
   }
 
   /** Leave data-broadcast mode and restore media to the ordinary player. */
@@ -264,8 +272,8 @@ export class AribReceiverHost {
     if (this.applicationExited) return
     this.applicationExited = true
     this.viewerParticipation.setPresentation({ visible: false, inputActive: false })
-    this.pendingStreamEvents.length = 0
-    this.clearApplicationLoadTimer()
+    this.runtimeSession.clearPendingStreamEvents()
+    this.runtimeSession.clearWatchdog()
     this.invalidateRuntime('application-exit')
     this.iframe.style.display = 'none'
     this.iframe.src = 'about:blank'
@@ -299,7 +307,7 @@ export class AribReceiverHost {
   setApplicationInputActive(active: boolean): void {
     this.assertAlive()
     this.viewerParticipation.setPresentation({ inputActive: Boolean(active) })
-    this.postToRuntime('receiver-input-state', { active: Boolean(active) })
+    this.runtimeSession.postToRuntime('receiver-input-state', { active: Boolean(active) })
   }
 
   getApplicationPresentationState(): AribApplicationPresentationState {
@@ -317,37 +325,39 @@ export class AribReceiverHost {
   resetViewerParticipationNotifications(): void {
     this.assertAlive()
     this.viewerParticipation.resetSession()
-    this.postToRuntime('receiver-input-state', { active: false })
+    this.runtimeSession.postToRuntime('receiver-input-state', { active: false })
   }
 
   setCaptionTracks(componentTags: number[]): void {
     this.captionComponentTags = [...new Set(componentTags.filter(Number.isInteger))]
-    this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
+    this.runtimeSession.postToRuntime('caption-tracks', {
+      componentTags: this.captionComponentTags,
+    })
   }
 
   pushCaption(packet: AribCaptionPacket): void {
-    this.postToRuntime('caption-data', packet)
+    this.runtimeSession.postToRuntime('caption-data', packet)
   }
 
   resetCaptions(): void {
     this.captionComponentTags = []
-    this.postToRuntime('caption-reset')
+    this.runtimeSession.postToRuntime('caption-reset')
   }
 
   /** Notify a stored carousel resource after the receiver updates or removes it. */
   notifyDataResource(path: string, change: BroadcastResourceChange): void {
-    this.postToRuntime('resource-change', { path, change })
+    this.runtimeSession.postToRuntime('resource-change', { path, change })
   }
 
   setProgramInfo(value: ProgramInfo): void {
     this.programInfo = cloneProgramInfo(value)
-    this.postToRuntime('program-info', { value: this.programInfo })
+    this.runtimeSession.postToRuntime('program-info', { value: this.programInfo })
   }
 
   /** Clear stale EIT state while changing services or broadcast sessions. */
   clearProgramInfo(): void {
     this.programInfo = null
-    this.postToRuntime('program-info', { value: null })
+    this.runtimeSession.postToRuntime('program-info', { value: null })
   }
 
   /**
@@ -415,25 +425,18 @@ export class AribReceiverHost {
 
   emitStreamEvent(value: RuntimeEvent): void {
     if (this.destroyed || this.applicationExited) return
-    if (this.activeRuntimeId) {
-      this.postToRuntime('stream-event', { value })
-      return
-    }
-    // Signalling can arrive before the application bootstrap is installed.
-    // Retain a small receiver-owned backlog rather than dropping those events.
-    if (this.pendingStreamEvents.length === 64) this.pendingStreamEvents.shift()
-    this.pendingStreamEvents.push(value)
+    this.runtimeSession.emitStreamEvent(value)
   }
 
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
-    this.pendingStreamEvents.length = 0
+    this.runtimeSession.clearPendingStreamEvents()
     this.ownerWindow.removeEventListener('message', this.handleRuntimeMessage)
     this.iframe.removeEventListener('load', this.handleFrameLoad)
     this.canvas.dispose()
-    this.clearApplicationLoadTimer()
-    this.invalidateRuntime('host-destroy')
+    this.runtimeSession.dispose()
+    this.disableRuntime('host-destroy')
     this.video = null
   }
 
@@ -452,7 +455,8 @@ export class AribReceiverHost {
         // queued postMessage run first, then reject a loaded 404/error document
         // immediately instead of leaving it visible until the watchdog fires.
         this.ownerWindow.setTimeout(() => {
-          if (this.destroyed || this.applicationExited || this.activeRuntimeId) return
+          if (this.destroyed || this.applicationExited ||
+              this.runtimeSession.hasActiveRuntime) return
           try {
             if (this.iframe.contentWindow?.location.href !== loadedUrl) return
           } catch {
@@ -465,7 +469,7 @@ export class AribReceiverHost {
     } catch {
       // A cross-origin page cannot participate in this receiver session.
     }
-    this.clearApplicationLoadTimer()
+    this.runtimeSession.clearWatchdog()
     this.invalidateRuntime('document-unload')
     this.onStatus?.('通信ページをブロックしました')
     this.onLifecycle?.({ type: 'frame-blocked', url: this.iframe.src })
@@ -492,18 +496,12 @@ export class AribReceiverHost {
     if (message?.type !== 'arib-runtime' || typeof message.runtimeId !== 'string') return
 
     if (message.event === 'installed') {
-      this.clearApplicationLoadTimer()
-      this.activeRuntimeId = message.runtimeId
-      this.onUrlChange?.(String(message.url ?? ''))
-      this.postToRuntime('caption-tracks', { componentTags: this.captionComponentTags })
-      this.postToRuntime('application-information', { value: this.applicationInformation })
-      this.postToRuntime('receiver-input-state', {
-        active: this.viewerParticipation.presentation.inputActive,
-      })
-      if (this.programInfo) this.postToRuntime('program-info', { value: this.programInfo })
-      for (const value of this.pendingStreamEvents.splice(0)) {
-        this.postToRuntime('stream-event', { value })
-      }
+      this.runtimeSession.acceptInstalled(message.runtimeId, {
+        captionComponentTags: this.captionComponentTags,
+        applicationInformation: this.applicationInformation,
+        inputActive: this.viewerParticipation.presentation.inputActive,
+        programInfo: this.programInfo,
+      }, () => this.onUrlChange?.(String(message.url ?? '')))
       this.onStatus?.('ランタイム導入済み')
       this.onLifecycle?.({
         type: 'installed',
@@ -512,14 +510,14 @@ export class AribReceiverHost {
       })
       return
     }
-    if (message.runtimeId !== this.activeRuntimeId) return
+    if (!this.runtimeSession.matches(message.runtimeId)) return
 
     switch (message.event) {
       case 'unloading':
         this.invalidateRuntime('document-unload')
         this.onStatus?.('ページ遷移中')
         this.onLifecycle?.({ type: 'navigating', url: String(message.url ?? '') })
-        this.armApplicationLoadTimer(String(message.url ?? this.iframe.src))
+        this.runtimeSession.armWatchdog(String(message.url ?? this.iframe.src))
         return
       case 'navigation-blocked':
         this.onStatus?.('外部URLをブロックしました')
@@ -611,42 +609,20 @@ export class AribReceiverHost {
     this.onVideoPlane?.(plane)
   }
 
-  private postToRuntime(event: string, detail: Record<string, unknown> = {}): void {
-    if (!this.activeRuntimeId) return
-    this.iframe.contentWindow?.postMessage({
-      type: 'arib-host',
-      runtimeId: this.activeRuntimeId,
-      event,
-      ...detail,
-    }, this.origin)
-  }
-
-  private armApplicationLoadTimer(url: string): void {
-    this.clearApplicationLoadTimer()
-    if (this.applicationLoadTimeoutMs === 0) return
-    this.applicationLoadTimer = this.ownerWindow.setTimeout(() => {
-      this.applicationLoadTimer = null
-      if (this.destroyed || this.applicationExited || this.activeRuntimeId) return
-      this.failApplicationLoad(url)
-    }, this.applicationLoadTimeoutMs)
-  }
-
   private failApplicationLoad(url: string): void {
-    if (this.destroyed || this.applicationExited || this.activeRuntimeId) return
-    this.clearApplicationLoadTimer()
+    if (this.destroyed || this.applicationExited || this.runtimeSession.hasActiveRuntime) return
+    this.runtimeSession.clearWatchdog()
     const message = `データ放送ページにランタイムを導入できませんでした: ${url}`
     this.onLifecycle?.({ type: 'error', message })
     this.exitApplication('データ放送ページを読み込めませんでした')
   }
 
-  private clearApplicationLoadTimer(): void {
-    if (this.applicationLoadTimer === null) return
-    this.ownerWindow.clearTimeout(this.applicationLoadTimer)
-    this.applicationLoadTimer = null
+  private invalidateRuntime(reason: AribMediaPlaneUnmountReason): void {
+    this.runtimeSession.invalidate()
+    this.disableRuntime(reason)
   }
 
-  private invalidateRuntime(reason: AribMediaPlaneUnmountReason): void {
-    this.activeRuntimeId = null
+  private disableRuntime(reason: AribMediaPlaneUnmountReason): void {
     this.mediaPlaneEnabled = false
     this.onCaptionSubscription?.({ componentTags: [] })
     this.mediaPlaneAdapter?.unmountMediaPlane(reason)
