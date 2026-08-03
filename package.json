@@ -59,7 +59,7 @@
     "test": "node --experimental-strip-types scripts/test-runtime-contracts.mjs && node --experimental-strip-types scripts/test-external-network.mjs && node --experimental-strip-types scripts/test-caption-controller.mjs && node --experimental-strip-types scripts/test-runtime-application.mjs && node --experimental-strip-types scripts/test-receiver-protocol.mjs && node --experimental-strip-types scripts/test-receiver-canvas.mjs && node --experimental-strip-types scripts/test-receiver-session.mjs && node --experimental-strip-types scripts/test-media-plane-characterization.mjs && node --experimental-strip-types scripts/test-vfs-worker.mjs",
     "build": "tsc --noEmit && vite build && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs",
     "build:sdk": "tsc --noEmit && vite build --config vite.sdk.config.mjs && vite build --config vite.worker.config.mjs && npm run build:types",
-    "build:tv": "tsc --noEmit && vite build --config vite.tv.config.mjs",
+    "build:tv": "tsc --noEmit && node --experimental-strip-types scripts/test-tv-input.mjs && vite build --config vite.tv.config.mjs",
     "build:types": "tsc -p tsconfig.build.json && node scripts/rewrite-declaration-imports.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "prepack": "npm run build:sdk"
