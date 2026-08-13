@@ -65,7 +65,11 @@ export class ExternalMediaHoleController {
       if (!desired.has(element)) this.restoreBackground(element)
     }
     for (const element of desired) {
-      if (this.backgrounds.has(element)) continue
+      if (this.backgrounds.has(element)) {
+        this.captureApplicationBackgroundChanges(element)
+        this.clearBackground(element)
+        continue
+      }
       this.backgrounds.set(element, {
         color: {
           value: element.style.getPropertyValue('background-color'),
@@ -76,8 +80,7 @@ export class ExternalMediaHoleController {
           priority: element.style.getPropertyPriority('background-image'),
         },
       })
-      element.style.setProperty('background-color', 'transparent', 'important')
-      element.style.setProperty('background-image', 'none', 'important')
+      this.clearBackground(element)
     }
   }
 
@@ -90,6 +93,7 @@ export class ExternalMediaHoleController {
   withApplicationBackgrounds<T>(callback: () => T): T {
     const backgrounds = [...this.backgrounds.entries()]
     for (const [element, original] of backgrounds) {
+      this.captureApplicationBackgroundChanges(element)
       this.applyBackground(element, original)
     }
     try {
@@ -97,8 +101,7 @@ export class ExternalMediaHoleController {
     } finally {
       for (const [element] of backgrounds) {
         if (!this.backgrounds.has(element)) continue
-        element.style.setProperty('background-color', 'transparent', 'important')
-        element.style.setProperty('background-image', 'none', 'important')
+        this.clearBackground(element)
       }
     }
   }
@@ -214,6 +217,33 @@ export class ExternalMediaHoleController {
       if (value.value) element.style.setProperty(property, value.value, value.priority)
       else element.style.removeProperty(property)
     }
+  }
+
+  private captureApplicationBackgroundChanges(element: HTMLElement): void {
+    const original = this.backgrounds.get(element)
+    if (!original) return
+    const color = {
+      value: element.style.getPropertyValue('background-color'),
+      priority: element.style.getPropertyPriority('background-color'),
+    }
+    const image = {
+      value: element.style.getPropertyValue('background-image'),
+      priority: element.style.getPropertyPriority('background-image'),
+    }
+    // A broadcast application may update inline styles while the hole is
+    // active. Preserve any value which no longer matches our own override so
+    // sampling and final restoration use the application's latest state.
+    if (color.value !== 'transparent' || color.priority !== 'important') {
+      original.color = color
+    }
+    if (image.value !== 'none' || image.priority !== 'important') {
+      original.image = image
+    }
+  }
+
+  private clearBackground(element: HTMLElement): void {
+    element.style.setProperty('background-color', 'transparent', 'important')
+    element.style.setProperty('background-image', 'none', 'important')
   }
 
   private restoreBackgrounds(): void {

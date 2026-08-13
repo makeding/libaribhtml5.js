@@ -22,6 +22,7 @@ import {
  */
 export function runExternalMediaHoleContract(create) {
   preservesInlineValuesAndPriorities(create)
+  preservesApplicationUpdatesWhileTheHoleIsActive(create)
   repeatedEnableKeepsFirstSnapshot(create)
   switchingObjectsRestoresThePreviousHole(create)
   restoreReturnsEveryTrackedElement(create)
@@ -29,6 +30,7 @@ export function runExternalMediaHoleContract(create) {
 
 export const externalMediaHoleCharacterizationCases = Object.freeze([
   'preserves inline values and priorities',
+  'preserves application updates while the hole is active',
   'repeated enable keeps the first snapshot',
   'switching objects restores the previous hole',
   'restore returns every tracked element',
@@ -116,6 +118,28 @@ function repeatedEnableKeepsFirstSnapshot(create) {
   controller.set(scene.object, false)
 
   assert.deepEqual(inlineStyleSnapshot(scene.wrapper, 'opacity'), before)
+}
+
+function preservesApplicationUpdatesWhileTheHoleIsActive(create) {
+  const scene = mediaScene()
+  const controller = create(scene.target)
+
+  controller.set(scene.object, true)
+  scene.overlay.style.setProperty('background-color', 'rgb(9, 8, 7)')
+  controller.withApplicationBackgrounds(() => {
+    assert.equal(scene.target.getComputedStyle(scene.overlay).backgroundColor, 'rgb(9, 8, 7)')
+    assert.equal(scene.target.getComputedStyle(scene.overlay).backgroundImage, 'url(stage.png)')
+  })
+  assert.deepEqual(inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image'), {
+    'background-color': { value: 'transparent', priority: 'important' },
+    'background-image': { value: 'none', priority: 'important' },
+  })
+
+  controller.restore()
+  assert.deepEqual(inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image'), {
+    'background-color': { value: 'rgb(9, 8, 7)', priority: '' },
+    'background-image': { value: 'url(stage.png)', priority: '' },
+  })
 }
 
 function switchingObjectsRestoresThePreviousHole(create) {
@@ -249,6 +273,15 @@ async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneControlle
       'class-driven application background changes must be resampled and reported',
     )
     assert.equal(canvasStyle?.media, 'all')
+
+    scene.document.body.computed.backgroundColor = 'rgb(4, 5, 6)'
+    scene.target.resizeObservers[0].trigger([])
+    scene.target.flushAnimationFrames(40)
+    assert.equal(
+      scene.runtimeEvents.filter(entry => entry.event === 'stage-style').at(-1).detail.backgroundColor,
+      'rgb(4, 5, 6)',
+      'non-mutation schedules must also resample the computed stage style',
+    )
     scene.controller.dispose('document-unload')
     assert.equal(
       scene.document.head.children.includes(canvasStyle),

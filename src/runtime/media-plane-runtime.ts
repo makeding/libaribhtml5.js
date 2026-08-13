@@ -50,7 +50,6 @@ export class RuntimeMediaPlaneController {
   private activeMediaObject: HTMLElement | null = null
   private lastMediaPlane = ''
   private lastStageBackgroundColor: string | null = null
-  private stageStyleDirty = true
   private observedMediaObject: HTMLElement | null = null
   private mediaPlaneFrame: number | null = null
   private observing = false
@@ -80,16 +79,17 @@ export class RuntimeMediaPlaneController {
   startObserving(): void {
     if (this.observing || this.disposed) return
     this.observing = true
-    this.mutationObserver = new this.target.MutationObserver(() => {
-      this.stageStyleDirty = true
-      this.schedule()
-    })
+    this.mutationObserver = new this.target.MutationObserver(this.schedule)
     this.observeDocumentMutations()
     this.resizeObserver?.observe(this.target.document.documentElement)
     this.target.addEventListener('resize', this.schedule)
     for (const event of mediaAnimationEvents) {
       this.target.document.addEventListener(event, this.schedule, true)
     }
+    // Stylesheets may become effective after DOMContentLoaded without a DOM
+    // mutation. A captured resource load gives the computed stage one more
+    // deduplicated sample when that happens.
+    this.target.document.addEventListener('load', this.schedule, true)
     // Synchronize even when the document was already parsed and no mutation follows.
     queueMicrotask(this.schedule)
   }
@@ -118,6 +118,10 @@ export class RuntimeMediaPlaneController {
     this.mutationObserver?.disconnect()
     this.resizeObserver?.disconnect()
     this.target.removeEventListener('resize', this.schedule)
+    this.target.document.removeEventListener('load', this.schedule, true)
+    for (const event of mediaAnimationEvents) {
+      this.target.document.removeEventListener(event, this.schedule, true)
+    }
     this.applicationCanvasStyle?.remove()
     this.applicationCanvasStyle = null
     beforeUnmount?.()
@@ -268,9 +272,8 @@ export class RuntimeMediaPlaneController {
   private reportMediaPlane(): void {
     // Temporarily restore receiver-cleared styles so the application remains
     // the source of truth for stage colour even after class/style updates.
-    if (this.stageStyleDirty && this.target.document.readyState !== 'loading') {
+    if (this.target.document.readyState !== 'loading') {
       this.reportStageStyle()
-      this.stageStyleDirty = false
     }
     const object = this.findMediaObject()
     if (!object) {
