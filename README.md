@@ -16,6 +16,9 @@
 <p align="center">
   <img src="docs/images/bs8k-message-removal.webp" alt="NHK BS8K message-removal guide" width="100%">
 </p>
+<p align="center">
+  <img src="docs/images/bs8k-contract.webp" alt="NHK BS8K satellite-contract solicitation screen" width="100%">
+</p>
 
 ## 日本語
 
