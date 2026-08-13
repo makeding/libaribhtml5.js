@@ -86,6 +86,23 @@ export class ExternalMediaHoleController {
     this.restoreBackgrounds()
   }
 
+  /** Read application styles while temporarily exposing backgrounds hidden for external video. */
+  withApplicationBackgrounds<T>(callback: () => T): T {
+    const backgrounds = [...this.backgrounds.entries()]
+    for (const [element, original] of backgrounds) {
+      this.applyBackground(element, original)
+    }
+    try {
+      return callback()
+    } finally {
+      for (const [element] of backgrounds) {
+        if (!this.backgrounds.has(element)) continue
+        element.style.setProperty('background-color', 'transparent', 'important')
+        element.style.setProperty('background-image', 'none', 'important')
+      }
+    }
+  }
+
   describeStackingPath(object: HTMLElement): AribMediaPlaneStackEntry[] {
     const path: AribMediaPlaneStackEntry[] = []
     let element: HTMLElement | null = object
@@ -179,6 +196,17 @@ export class ExternalMediaHoleController {
   private restoreBackground(element: HTMLElement): void {
     const original = this.backgrounds.get(element)
     if (!original) return
+    this.applyBackground(element, original)
+    this.backgrounds.delete(element)
+  }
+
+  private applyBackground(
+    element: HTMLElement,
+    original: {
+      color: { value: string; priority: string }
+      image: { value: string; priority: string }
+    },
+  ): void {
     for (const [property, value] of [
       ['background-color', original.color],
       ['background-image', original.image],
@@ -186,7 +214,6 @@ export class ExternalMediaHoleController {
       if (value.value) element.style.setProperty(property, value.value, value.priority)
       else element.style.removeProperty(property)
     }
-    this.backgrounds.delete(element)
   }
 
   private restoreBackgrounds(): void {

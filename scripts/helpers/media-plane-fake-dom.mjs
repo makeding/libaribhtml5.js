@@ -86,6 +86,8 @@ export class FakeElement {
     this.firstElementChild = null
     this.parentElement = null
     this.ownerDocument = null
+    this.media = ''
+    this.textContent = ''
   }
 
   append(...children) {
@@ -114,6 +116,13 @@ export class FakeElement {
   querySelector() {
     return null
   }
+
+  remove() {
+    if (this.parentElement === null) return
+    this.parentElement.children = this.parentElement.children.filter(child => child !== this)
+    this.parentElement.firstElementChild = this.parentElement.children[0] ?? null
+    this.parentElement = null
+  }
 }
 
 export class FakeDocument {
@@ -126,9 +135,11 @@ export class FakeDocument {
       tagName: 'body',
       box: rect(0, 0, 3840, 2160),
     })
+    this.head = new FakeElement({ tagName: 'head' })
     this.documentElement.ownerDocument = this
+    this.head.ownerDocument = this
     this.body.ownerDocument = this
-    this.documentElement.append(this.body)
+    this.documentElement.append(this.head, this.body)
     this.readyState = 'complete'
     this.animations = []
     this.listeners = new Map()
@@ -151,6 +162,12 @@ export class FakeDocument {
       return descendants(this.body).find(element => element.tagName === 'OBJECT') ?? null
     }
     assert.fail(`fake DOM does not implement selector ${selector}`)
+  }
+
+  createElement(tagName) {
+    const element = new FakeElement({ tagName })
+    element.ownerDocument = this
+    return element
   }
 
   getAnimations() {

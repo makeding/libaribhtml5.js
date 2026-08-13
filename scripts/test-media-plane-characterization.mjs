@@ -215,6 +215,50 @@ async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneControlle
 
   {
     const scene = runtimeScene(RuntimeMediaPlaneController)
+    scene.overlay.box = rect(0, 0, 0, 0)
+    scene.document.body.computed.backgroundColor = 'rgb(255, 255, 255)'
+    scene.controller.startObserving()
+    scene.controller.startDocument()
+
+    assert.equal(
+      scene.document.body.style.getPropertyValue('background'),
+      '',
+      'external canvas preparation must not overwrite application body styles',
+    )
+    const canvasStyle = scene.document.head.children.find(element => element.tagName === 'STYLE')
+    assert.equal(canvasStyle?.textContent, 'html, body { background: transparent !important; }')
+    assert.equal(canvasStyle?.media, 'all')
+
+    scene.target.flushAnimationFrames(16)
+    assert.equal(scene.runtimeEvents[0].event, 'stage-style')
+    assert.equal(scene.runtimeEvents[0].detail.backgroundColor, 'rgb(255, 255, 255)')
+    assert.equal(canvasStyle?.media, 'all', 'the transparent canvas must be restored after sampling')
+
+    scene.document.body.computed.backgroundColor = 'rgb(0, 0, 0)'
+    scene.target.mutationObservers[0].trigger([{
+      type: 'attributes',
+      target: scene.document.body,
+      attributeName: 'class',
+    }])
+    scene.target.flushAnimationFrames(32)
+    assert.deepEqual(
+      scene.runtimeEvents
+        .filter(entry => entry.event === 'stage-style')
+        .map(entry => entry.detail.backgroundColor),
+      ['rgb(255, 255, 255)', 'rgb(0, 0, 0)'],
+      'class-driven application background changes must be resampled and reported',
+    )
+    assert.equal(canvasStyle?.media, 'all')
+    scene.controller.dispose('document-unload')
+    assert.equal(
+      scene.document.head.children.includes(canvasStyle),
+      false,
+      'disposing the runtime must remove its canvas override stylesheet',
+    )
+  }
+
+  {
+    const scene = runtimeScene(RuntimeMediaPlaneController)
     const animation = {
       playState: 'running',
       effect: { target: scene.object },

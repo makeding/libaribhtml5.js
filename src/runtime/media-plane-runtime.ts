@@ -43,12 +43,14 @@ export class RuntimeMediaPlaneController {
   private readonly mediaObjectIds = new WeakMap<HTMLElement, string>()
   private readonly externalMediaHole: ExternalMediaHoleController
   private readonly resizeObserver: ResizeObserver | null
+  private applicationCanvasStyle: HTMLStyleElement | null = null
   private mutationObserver: MutationObserver | null = null
 
   private nextMediaObjectId = 1
   private activeMediaObject: HTMLElement | null = null
   private lastMediaPlane = ''
-  private stageStyleReported = false
+  private lastStageBackgroundColor: string | null = null
+  private stageStyleDirty = true
   private observedMediaObject: HTMLElement | null = null
   private mediaPlaneFrame: number | null = null
   private observing = false
@@ -78,13 +80,11 @@ export class RuntimeMediaPlaneController {
   startObserving(): void {
     if (this.observing || this.disposed) return
     this.observing = true
-    this.mutationObserver = new this.target.MutationObserver(this.schedule)
-    this.mutationObserver.observe(this.target.document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class', 'style', 'type', 'data-arib-type', 'name', 'value'],
-      childList: true,
-      subtree: true,
+    this.mutationObserver = new this.target.MutationObserver(() => {
+      this.stageStyleDirty = true
+      this.schedule()
     })
+    this.observeDocumentMutations()
     this.resizeObserver?.observe(this.target.document.documentElement)
     this.target.addEventListener('resize', this.schedule)
     for (const event of mediaAnimationEvents) {
@@ -118,6 +118,8 @@ export class RuntimeMediaPlaneController {
     this.mutationObserver?.disconnect()
     this.resizeObserver?.disconnect()
     this.target.removeEventListener('resize', this.schedule)
+    this.applicationCanvasStyle?.remove()
+    this.applicationCanvasStyle = null
     beforeUnmount?.()
     this.unmountMediaPlane(reason)
   }
@@ -129,28 +131,34 @@ export class RuntimeMediaPlaneController {
   }
 
   private reportStageStyle(): void {
-    const body = this.target.document.body
-    const style = this.target.getComputedStyle(body ?? this.target.document.documentElement)
-    let backgroundColor = style.backgroundColor
-    const canvasRect = body?.getBoundingClientRect()
-    if (canvasRect && canvasRect.width > 0 && canvasRect.height > 0) {
-      const tolerance = 1
-      for (const element of this.target.document.querySelectorAll<HTMLElement>('body *')) {
-        const candidateStyle = this.target.getComputedStyle(element)
-        if (candidateStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ||
-            candidateStyle.backgroundColor === 'transparent') continue
-        const rect = element.getBoundingClientRect()
-        if (rect.width <= 0 || rect.height <= 0 ||
-            rect.left > canvasRect.left + tolerance ||
-            rect.top > canvasRect.top + tolerance ||
-            rect.right < canvasRect.right - tolerance ||
-            rect.bottom < canvasRect.bottom - tolerance) continue
-        // Caption applications commonly put the real black stage in a
-        // full-canvas #backscreen while leaving body white.
-        backgroundColor = candidateStyle.backgroundColor
-        break
-      }
-    }
+    const backgroundColor = this.withApplicationCanvasBackgrounds(() =>
+      this.externalMediaHole.withApplicationBackgrounds(() => {
+        const body = this.target.document.body
+        const style = this.target.getComputedStyle(body ?? this.target.document.documentElement)
+        let applicationBackgroundColor = style.backgroundColor
+        const canvasRect = body?.getBoundingClientRect()
+        if (canvasRect && canvasRect.width > 0 && canvasRect.height > 0) {
+          const tolerance = 1
+          for (const element of this.target.document.querySelectorAll<HTMLElement>('body *')) {
+            const candidateStyle = this.target.getComputedStyle(element)
+            if (candidateStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ||
+                candidateStyle.backgroundColor === 'transparent') continue
+            const rect = element.getBoundingClientRect()
+            if (rect.width <= 0 || rect.height <= 0 ||
+                rect.left > canvasRect.left + tolerance ||
+                rect.top > canvasRect.top + tolerance ||
+                rect.right < canvasRect.right - tolerance ||
+                rect.bottom < canvasRect.bottom - tolerance) continue
+            // Caption applications commonly put the real black stage in a
+            // full-canvas #backscreen while leaving body white.
+            applicationBackgroundColor = candidateStyle.backgroundColor
+            break
+          }
+        }
+        return applicationBackgroundColor
+      }))
+    if (backgroundColor === this.lastStageBackgroundColor) return
+    this.lastStageBackgroundColor = backgroundColor
     this.postRuntime('stage-style', { backgroundColor })
   }
 
@@ -163,14 +171,40 @@ export class RuntimeMediaPlaneController {
       'only light',
       'important',
     )
-    this.target.document.documentElement.style.setProperty(
-      'background',
-      'transparent',
-      'important',
-    )
-    if (this.target.document.body) {
-      this.target.document.body.style.setProperty('background', 'transparent', 'important')
+    if (this.applicationCanvasStyle !== null) return
+    // Keep the transparency override in a runtime-owned stylesheet instead of
+    // overwriting application inline styles. Disabling this sheet therefore
+    // exposes the current application background, including later class/style
+    // changes, without retaining a stale startup snapshot.
+    const style = this.target.document.createElement('style')
+    style.textContent = 'html, body { background: transparent !important; }'
+    style.media = 'all'
+    ;(this.target.document.head ?? this.target.document.documentElement).append(style)
+    this.applicationCanvasStyle = style
+  }
+
+  private withApplicationCanvasBackgrounds<T>(callback: () => T): T {
+    const style = this.applicationCanvasStyle
+    if (style === null) return callback()
+    // Own writes must not make the observer schedule an endless resampling loop.
+    this.mutationObserver?.disconnect()
+    style.media = 'not all'
+    try {
+      return callback()
+    } finally {
+      style.media = 'all'
+      this.observeDocumentMutations()
     }
+  }
+
+  private observeDocumentMutations(): void {
+    if (!this.observing || this.disposed || this.mutationObserver === null) return
+    this.mutationObserver.observe(this.target.document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'type', 'data-arib-type', 'name', 'value'],
+      childList: true,
+      subtree: true,
+    })
   }
 
   private activeMediaAnimation(): boolean {
@@ -232,10 +266,11 @@ export class RuntimeMediaPlaneController {
   }
 
   private reportMediaPlane(): void {
-    // Sample after document ready but before clearing application backgrounds.
-    if (!this.stageStyleReported && this.target.document.readyState !== 'loading') {
+    // Temporarily restore receiver-cleared styles so the application remains
+    // the source of truth for stage colour even after class/style updates.
+    if (this.stageStyleDirty && this.target.document.readyState !== 'loading') {
       this.reportStageStyle()
-      this.stageStyleReported = true
+      this.stageStyleDirty = false
     }
     const object = this.findMediaObject()
     if (!object) {
