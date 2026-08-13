@@ -199,6 +199,7 @@ export class ExternalMediaHoleController {
   private restoreBackground(element: HTMLElement): void {
     const original = this.backgrounds.get(element)
     if (!original) return
+    this.captureApplicationBackgroundChanges(element)
     this.applyBackground(element, original)
     this.backgrounds.delete(element)
   }

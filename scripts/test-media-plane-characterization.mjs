@@ -135,9 +135,10 @@ function preservesApplicationUpdatesWhileTheHoleIsActive(create) {
     'background-image': { value: 'none', priority: 'important' },
   })
 
+  scene.overlay.style.setProperty('background-color', 'rgb(6, 5, 4)')
   controller.restore()
   assert.deepEqual(inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image'), {
-    'background-color': { value: 'rgb(9, 8, 7)', priority: '' },
+    'background-color': { value: 'rgb(6, 5, 4)', priority: '' },
     'background-image': { value: 'url(stage.png)', priority: '' },
   })
 }
