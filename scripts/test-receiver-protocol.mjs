@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   normalizeApplicationReplaceRequest,
   normalizeCaptionSubscriptionTags,
+  normalizeReceiverCanvasSize,
   normalizeMediaLayer,
   normalizeMediaPlane,
   normalizeStageBackgroundColor,
@@ -22,6 +23,13 @@ assert.deepEqual(
   normalizeCaptionSubscriptionTags([8, '8', 0, 0xffff, -1, 0x10000, 1.5, NaN]),
   [8, 0, 0xffff],
 )
+
+assert.deepEqual(normalizeReceiverCanvasSize({ width: '1920', height: 1080 }), {
+  width: 1920,
+  height: 1080,
+})
+assert.equal(normalizeReceiverCanvasSize({ width: 0, height: 1080 }), null)
+assert.equal(normalizeReceiverCanvasSize({ width: 1920.5, height: 1080 }), null)
 
 assert.deepEqual(normalizeApplicationReplaceRequest({
   organizationId: '42',

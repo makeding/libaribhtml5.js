@@ -49,6 +49,7 @@ export class RuntimeMediaPlaneController {
   private nextMediaObjectId = 1
   private activeMediaObject: HTMLElement | null = null
   private lastMediaPlane = ''
+  private lastScreenSize = ''
   private lastStageBackgroundColor: string | null = null
   private observedMediaObject: HTMLElement | null = null
   private mediaPlaneFrame: number | null = null
@@ -235,9 +236,25 @@ export class RuntimeMediaPlaneController {
   private logicalViewport(): { width: number; height: number } {
     const content = this.target.document
       .querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content ?? ''
-    const width = Number(content.match(/(?:^|,)\s*width\s*=\s*(\d+)/i)?.[1] ?? 3840)
-    const height = Number(content.match(/(?:^|,)\s*height\s*=\s*(\d+)/i)?.[1] ?? 2160)
+    const parseDimension = (name: string): number | null => {
+      const value = Number(content.match(new RegExp(`(?:^|[,;])\\s*${name}\\s*=\\s*(\\d+)`, 'i'))?.[1])
+      return Number.isSafeInteger(value) && value > 0 ? value : null
+    }
+    const declaredWidth = parseDimension('width')
+    const declaredHeight = parseDimension('height')
+    // Some Hybridcast pages declare only width. Keep the receiver display at
+    // 16:9 instead of pairing that width with the 4K fallback height.
+    const width = declaredWidth ?? (declaredHeight === null ? 3840 : Math.round(declaredHeight * 16 / 9))
+    const height = declaredHeight ?? (declaredWidth === null ? 2160 : Math.round(declaredWidth * 9 / 16))
     return { width, height }
+  }
+
+  private reportScreenSize(): void {
+    const size = this.logicalViewport()
+    const message = JSON.stringify(size)
+    if (message === this.lastScreenSize) return
+    this.lastScreenSize = message
+    this.postRuntime('screen-size', size)
   }
 
   private slotIdFor(object: HTMLElement): string {
@@ -270,6 +287,9 @@ export class RuntimeMediaPlaneController {
   }
 
   private reportMediaPlane(): void {
+    // The HTML application canvas has its own declared logical resolution,
+    // even when it does not contain an ARIB broadcast-media object.
+    this.reportScreenSize()
     // Temporarily restore receiver-cleared styles so the application remains
     // the source of truth for stage colour even after class/style updates.
     if (this.target.document.readyState !== 'loading') {

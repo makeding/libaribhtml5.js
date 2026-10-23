@@ -34,6 +34,9 @@ export class ReceiverCanvasController {
       ((callback: ResizeObserverCallback) => new ResizeObserver(callback))
     this.resizeObserver = createResizeObserver(() => this.fit())
     this.resizeObserver.observe(this.viewport)
+    // The player surface is always a 16:9 display area. Application metadata
+    // controls only the iframe's logical canvas, never the available video area.
+    this.viewport.style.aspectRatio = '16 / 9'
     this.fit()
   }
 
@@ -59,7 +62,6 @@ export class ReceiverCanvasController {
   applyScreenSize(width: number, height: number): void {
     this.logicalWidth = width
     this.logicalHeight = height
-    this.viewport.style.aspectRatio = `${width} / ${height}`
     this.fit()
   }
 

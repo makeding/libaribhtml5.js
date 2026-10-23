@@ -4,7 +4,7 @@ import { AribReceiverHost as BrowserReceiverHost } from './receiver-host'
 import type { AribReceiverHostOptions } from './receiver-host'
 import {
   configureTvReceiverIframe,
-  dispatchTvReceiverKey,
+  dispatchReceiverKey,
 } from './tv-input'
 
 /**
@@ -26,7 +26,7 @@ export class AribReceiverHost extends BrowserReceiverHost {
 
   override dispatchKey(code: number): boolean {
     if (this.tvDestroyed || !this.getApplicationPresentationState().inputActive) return false
-    return dispatchTvReceiverKey(this.iframe, code)
+    return dispatchReceiverKey(this.iframe, code)
   }
 
   override destroy(): void {

@@ -128,6 +128,11 @@ function createRuntime({
     event: 'exit-managed-state',
     detail: { url: 'https://example.test/' },
   })
+  runtime.target.navigator.applicationManager.launchDataBroadcastingBrowser()
+  assert.deepEqual(runtime.messages.at(-1), {
+    event: 'launch-data-broadcasting-browser',
+    detail: {},
+  })
   owner.destroyApplication()
   assert.equal(runtime.messages.at(-1).event, 'destroy')
   assert.equal(owner.getApplicationBoundaryAndPermissionDescriptor(), null)

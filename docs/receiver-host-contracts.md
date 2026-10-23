@@ -58,6 +58,26 @@ read-only through the legacy `receiverinfo` Ureg used by broadcaster apps. The
 host owns persistence and passes a snapshot; writes inside the app do not flow
 back into the host's settings.
 
+## HTML application canvas
+
+The runtime reads `width` and `height` from the document's
+`meta[name="viewport"]` and sends the declared logical canvas to the receiver
+host. A document declaring `width=1920,height=1080` is rendered as a 1920×1080
+application plane and fitted inside `viewport`; this also applies when the
+document has no ARIB broadcast-media object. The default remains 3840×2160 when
+the declaration is absent or invalid.
+
+This is an application-document contract, not a broadcaster or transport
+profile. Hosts must not override it with station-specific CSS sizing rules.
+
+## HTML user agent
+
+An integrating receiver may provide `userAgent` when it needs to expose an
+honest Hybridcast capability token to managed HTML documents. The value is
+installed before document scripts execute and restored when that runtime is
+unloaded. The SDK does not add a broadcaster, smart-card, or device-vendor
+identity on its own.
+
 ## Device identifiers
 
 The default package combination remains `huggy`, `Huggy ARIB HTML5 Receiver`,

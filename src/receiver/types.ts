@@ -32,6 +32,9 @@ export type AribApplicationReplaceHandler = (
 
 export type AribExitManagedStateHandler = (url: string) => void | Promise<void>
 
+/** Return an HTML application to the receiver-owned BML data-broadcasting browser. */
+export type AribLaunchDataBroadcastingBrowserHandler = () => void | Promise<void>
+
 export type AribBroadcastClock = {
   /** Absolute broadcast time at the anchor, as Unix epoch milliseconds. */
   epochMilliseconds: number
@@ -80,12 +83,18 @@ export type AribReceiverHostOptions = {
   onReplaceApplication?: AribApplicationReplaceHandler
   /** Transfer an application to an unmanaged general-application URL. */
   onExitManagedState?: AribExitManagedStateHandler
+  /** Return the current Hybridcast HTML application to its paired BML browser. */
+  onLaunchDataBroadcastingBrowser?: AribLaunchDataBroadcastingBrowserHandler
   /** Override the default browser alert when the receiver cannot open the EPG. */
   onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   /** Receiver identity/capabilities exposed to the broadcast application. */
   systemInformation?: ReceiverSystemInformationOverrides
   /** Resolve receiver/CAS identifiers; defaults to the bundled Huggy demo identity. */
   getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
+  /** Initial BML general registers exposed through navigator.bmlCompat. */
+  bmlGreg?: string[]
+  /** Optional user-agent string exposed only within the managed HTML runtime. */
+  userAgent?: string
   /** Receiver UI hook for a TR-B39 viewer-participation corner notification. */
   onViewerParticipation?: (event: AribViewerParticipationEvent) => void
 }

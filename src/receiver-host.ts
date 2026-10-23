@@ -17,6 +17,7 @@ import {
   normalizeBroadcastBaseUrl,
   resolveBroadcastUrl,
 } from './broadcast-url'
+import { dispatchReceiverKey } from './tv-input'
 import type {
   BroadcastResourceChange,
   BroadcastResourceStore,
@@ -37,6 +38,7 @@ import {
 import {
   normalizeApplicationReplaceRequest,
   normalizeCaptionSubscriptionTags,
+  normalizeReceiverCanvasSize,
   normalizeMediaPlane,
   normalizeStageBackgroundColor,
   type RuntimeMessage,
@@ -50,6 +52,7 @@ import type {
   AribCaptionPacket,
   AribCaptionSubscription,
   AribExitManagedStateHandler,
+  AribLaunchDataBroadcastingBrowserHandler,
   AribReceiverHostOptions,
   AribReceiverLifecycleEvent,
 } from './receiver/types'
@@ -71,6 +74,7 @@ export type {
   AribCaptionPacket,
   AribCaptionSubscription,
   AribExitManagedStateHandler,
+  AribLaunchDataBroadcastingBrowserHandler,
   AribReceiverHostOptions,
   AribReceiverLifecycleEvent,
 } from './receiver/types'
@@ -97,9 +101,12 @@ export class AribReceiverHost {
   private readonly onCaptionSubscription?: (subscription: AribCaptionSubscription) => void
   private readonly onReplaceApplication?: AribApplicationReplaceHandler
   private readonly onExitManagedState?: AribExitManagedStateHandler
+  private readonly onLaunchDataBroadcastingBrowser?: AribLaunchDataBroadcastingBrowserHandler
   private readonly onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   private readonly systemInformation?: ReceiverSystemInformationOverrides
   private readonly getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
+  private readonly bmlGreg: string[]
+  private readonly userAgent?: string
   private readonly onViewerParticipation?: (event: AribViewerParticipationEvent) => void
   private readonly viewerParticipation = new ViewerParticipationController()
   private readonly canvas: ReceiverCanvasController
@@ -173,9 +180,12 @@ export class AribReceiverHost {
     this.onCaptionSubscription = options.onCaptionSubscription
     this.onReplaceApplication = options.onReplaceApplication
     this.onExitManagedState = options.onExitManagedState
+    this.onLaunchDataBroadcastingBrowser = options.onLaunchDataBroadcastingBrowser
     this.onProgramGuideUnavailable = options.onProgramGuideUnavailable
     this.systemInformation = options.systemInformation
     this.getDeviceIdentifier = options.getDeviceIdentifier
+    this.bmlGreg = [...(options.bmlGreg ?? [])]
+    this.userAgent = options.userAgent
     this.onViewerParticipation = options.onViewerParticipation
 
     this.ownerWindow.addEventListener('message', this.handleRuntimeMessage)
@@ -204,7 +214,15 @@ export class AribReceiverHost {
       systemInformation: this.systemInformation,
       getDeviceIdentifier: this.getDeviceIdentifier,
       application: this.applicationInformation,
+      bmlGreg: this.bmlGreg,
+      userAgent: this.userAgent,
     })
+  }
+
+  /** Replace BML general registers while retaining the active runtime reference. */
+  setBmlGreg(values: readonly string[]): void {
+    this.assertAlive()
+    this.bmlGreg.splice(0, this.bmlGreg.length, ...values)
   }
 
   /** Set the MH-AIT identity exposed by applicationManager.getOwnerApplication(). */
@@ -285,22 +303,11 @@ export class AribReceiverHost {
   dispatchKey(code: number): boolean {
     this.assertAlive()
     if (!this.viewerParticipation.presentation.inputActive) return false
-    const target = this.iframe.contentWindow
-    if (!target) return false
-    try {
-      for (const type of ['keydown', 'keyup']) {
-        const event = new KeyboardEvent(type, { bubbles: true, cancelable: true })
-        Object.defineProperties(event, {
-          keyCode: { value: code },
-          which: { value: code },
-        })
-        target.document.dispatchEvent(event)
-      }
-      return true
-    } catch {
+    if (!dispatchReceiverKey(this.iframe, code)) {
       this.onStatus?.('キー入力を送信できません')
       return false
     }
+    return true
   }
 
   /** Transfer or release receiver-key ownership for the broadcast application. */
@@ -536,6 +543,11 @@ export class AribReceiverHost {
         )
         return
       }
+      case 'screen-size': {
+        const size = normalizeReceiverCanvasSize(message)
+        if (size) this.canvas.applyScreenSize(size.width, size.height)
+        return
+      }
       case 'media-plane':
       case 'video-plane':
         this.applyMediaPlane(message)
@@ -575,6 +587,17 @@ export class AribReceiverHost {
         }
         void Promise.resolve(this.onExitManagedState(url)).catch(error => {
           this.onStatus?.(`管理外アプリケーション遷移エラー：${String(error)}`)
+          this.onLifecycle?.({ type: 'error', message: String(error) })
+        })
+        return
+      }
+      case 'launch-data-broadcasting-browser': {
+        if (!this.onLaunchDataBroadcastingBrowser) {
+          this.onStatus?.('データ放送ブラウザへの復帰に対応していません')
+          return
+        }
+        void Promise.resolve(this.onLaunchDataBroadcastingBrowser()).catch(error => {
+          this.onStatus?.(`データ放送ブラウザへの復帰エラー：${String(error)}`)
           this.onLifecycle?.({ type: 'error', message: String(error) })
         })
         return

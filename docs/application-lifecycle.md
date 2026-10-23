@@ -35,6 +35,23 @@
 別 application へ切り替える必要がある場合、実行中のページが
 `navigator.applicationManager.getOwnerApplication().replaceApplication(...)` を呼びます。
 
+## BML から Hybridcast への状態移行
+
+BML engine が AIT 制御 HTML application へ制御を渡す場合、general register は receiver host が
+所有します。BML 側から受け取った register snapshot を、HTML document を読み込む前に
+`host.setBmlGreg()` で渡してください。runtime は同じ receiver-owned array を
+`navigator.bmlCompat.browserPseudo.Greg` として公開します。
+
+```ts
+host.setBmlGreg(bmlTransition.greg)
+host.setApplicationInformation(aitApplication)
+host.loadApplication(htmlEntryPoint)
+```
+
+`setBmlGreg()` は active runtime が参照する array identity を維持するため、document を残したまま
+更新しても state が分断されません。受信機識別子や operator policy は別の receiver API が所有し、
+general register を識別子として扱ってはいけません。
+
 ## replaceApplication
 
 ARIB STD-B62 第二編 3.3.7–3.3.8 は `ApplicationManager` と `Application` を定義します。
@@ -64,6 +81,15 @@ const host = new AribReceiverHost({
 `exitFromManagedState(url)` は放送管理外の general application へ移る別の操作です。
 許可境界と外部 network policy を receiver 側で検証し、対応する場合だけ
 `onExitManagedState` で処理します。
+
+## BML ブラウザへの復帰
+
+Hybridcast HTML application は
+`navigator.applicationManager.launchDataBroadcastingBrowser()` で、起動元の
+BML data-broadcasting browser への復帰を receiver に要求できます。runtime はこの要求を
+`AribReceiverHostOptions.onLaunchDataBroadcastingBrowser` に渡します。host は BML session を
+保持したまま HTML application plane を閉じ、BML browser を再表示してください。callback がない
+場合は要求を成功扱いにせず、runtime は現在の application を維持します。
 
 ## アプリケーション境界と権限
 

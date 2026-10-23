@@ -154,7 +154,15 @@ export class RuntimeApplicationController {
     Object.defineProperty(this.target.navigator, 'applicationManager', {
       configurable: true,
       enumerable: true,
-      value: { getOwnerApplication: () => this.ownerApplication },
+      value: {
+        getOwnerApplication: () => this.ownerApplication,
+        // Hybridcast HTML applications use this receiver operation to return
+        // to the BML data-broadcasting browser that launched them.
+        launchDataBroadcastingBrowser: () => {
+          this.requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
+          this.postRuntime('launch-data-broadcasting-browser')
+        },
+      },
     })
   }
 

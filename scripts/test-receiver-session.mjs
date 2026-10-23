@@ -116,6 +116,7 @@ const lifecycle = []
 const statuses = []
 const urls = []
 const subscriptions = []
+const bmlReturns = []
 const host = new AribReceiverHost({
   iframe: platform.iframe,
   viewport: platform.viewport,
@@ -123,6 +124,7 @@ const host = new AribReceiverHost({
   onStatus: status => statuses.push(status),
   onUrlChange: url => urls.push(url),
   onCaptionSubscription: subscription => subscriptions.push(subscription),
+  onLaunchDataBroadcastingBrowser: () => bmlReturns.push('requested'),
 })
 
 assert.equal(platform.ownerWindow.listenerCount('message'), 1)
@@ -180,6 +182,31 @@ assert.equal(replayed.at(-1).value.message_id, 64)
 assert.ok(replayed.every(message => message.runtimeId === 'runtime-1'))
 assert.equal(lifecycle.at(-1).type, 'installed')
 assert.equal(urls.at(-1), 'https://receiver.example/data-broadcast/app/index.html')
+
+platform.ownerWindow.dispatch('message', {
+  origin: 'https://receiver.example',
+  data: {
+    type: 'arib-runtime',
+    runtimeId: 'runtime-1',
+    event: 'screen-size',
+    width: 1920,
+    height: 1080,
+  },
+})
+assert.equal(platform.iframe.style.width, '1920px')
+assert.equal(platform.iframe.style.height, '1080px')
+assert.equal(platform.iframe.style.transform, 'scale(1)')
+assert.equal(platform.viewport.style.aspectRatio, '16 / 9')
+
+platform.ownerWindow.dispatch('message', {
+  origin: 'https://receiver.example',
+  data: {
+    type: 'arib-runtime',
+    runtimeId: 'runtime-1',
+    event: 'launch-data-broadcasting-browser',
+  },
+})
+assert.deepEqual(bmlReturns, ['requested'])
 
 const postedAfterInstall = platform.posted.length
 host.emitStreamEvent({ message_id: 65 })

@@ -11,7 +11,7 @@ export function configureTvReceiverIframe(iframe: TvReceiverIframe): void {
 }
 
 /** Dispatch a receiver key in the child browsing context that owns the application DOM. */
-export function dispatchTvReceiverKey(iframe: TvReceiverIframe, code: number): boolean {
+export function dispatchReceiverKey(iframe: TvReceiverIframe, code: number): boolean {
   const target = iframe.contentWindow
   if (!target || !Number.isInteger(code)) return false
   try {
@@ -35,3 +35,6 @@ export function dispatchTvReceiverKey(iframe: TvReceiverIframe, code: number): b
     return false
   }
 }
+
+/** @deprecated Use dispatchReceiverKey(). */
+export const dispatchTvReceiverKey = dispatchReceiverKey

@@ -18,6 +18,22 @@ export type ReceiverMediaPlaneFallback = {
   screenHeight: number
 }
 
+export type ReceiverCanvasSize = {
+  width: number
+  height: number
+}
+
+/** Normalize the untrusted logical canvas dimensions reported by the runtime. */
+export function normalizeReceiverCanvasSize(message: RuntimeMessage): ReceiverCanvasSize | null {
+  const width = Number(message.width)
+  const height = Number(message.height)
+  if (!Number.isSafeInteger(width) || width <= 0 ||
+      !Number.isSafeInteger(height) || height <= 0) {
+    return null
+  }
+  return { width, height }
+}
+
 export function normalizeStageBackgroundColor(value: unknown): string | null {
   const color = String(value ?? '')
   return color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent'

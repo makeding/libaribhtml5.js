@@ -74,6 +74,10 @@ export type RuntimeOptions = {
   getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
   /** MH-AIT metadata for the application which owns this document. */
   application?: RuntimeApplicationInformation
+  /** Receiver-owned BML general registers shared with a paired BML engine. */
+  bmlGreg?: string[]
+  /** Optional receiver identity token exposed to HTML application feature detection. */
+  userAgent?: string
 }
 
 const keyValues: Record<string, number> = {
@@ -111,6 +115,15 @@ function defineNavigatorProperty(target: Navigator, name: string, value: unknown
   })
 }
 
+function overrideNavigatorUserAgent(target: Navigator, value: string): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(target, 'userAgent')
+  defineNavigatorProperty(target, 'userAgent', value)
+  return () => {
+    if (descriptor) Object.defineProperty(target, 'userAgent', descriptor)
+    else Reflect.deleteProperty(target, 'userAgent')
+  }
+}
+
 export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = {}): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
   target.__ARIB_HTML5_RUNTIME__ = 'installing'
@@ -124,6 +137,11 @@ export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = 
 }
 
 function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOptions): void {
+  // Apply feature-detection identity before the application can execute any
+  // script. It belongs to the receiver host rather than a broadcaster profile.
+  const restoreUserAgent = options.userAgent === undefined
+    ? null
+    : overrideNavigatorUserAgent(target.navigator, options.userAgent)
   installBroadcastClock(target, options.now)
   installRomSoundProtocol(target)
   installAribSymbolFont(target)
@@ -322,6 +340,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
 
   defineNavigatorProperty(target.navigator, 'bmlCompat', {
     browserPseudo: {
+      // A Hybridcast application may be launched after BML populated its
+      // general registers. Keep the receiver-owned array instead of taking a
+      // bootstrap copy, so the two application runtimes share that state.
+      Greg: options.bmlGreg ?? [],
       // Older broadcaster applications use the synchronous BML API instead
       // of receiverDevice.getDeviceIdentifier(). Keep both paths on the same
       // stable demo ACAS identifier.
@@ -382,6 +404,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   target.addEventListener('pagehide', () => {
     mediaPlaneRuntime.dispose('document-unload', () => resourceCache.dispose())
     applicationController.dispose()
+    restoreUserAgent?.()
     postRuntime('unloading', { url: target.location.href })
   })
 

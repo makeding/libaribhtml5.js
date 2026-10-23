@@ -222,6 +222,10 @@ function runtimeScene(RuntimeMediaPlaneController) {
 async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneController) {
   {
     const scene = runtimeScene(RuntimeMediaPlaneController)
+    const querySelector = scene.document.querySelector.bind(scene.document)
+    scene.document.querySelector = selector => selector === 'meta[name="viewport"]'
+      ? { content: 'width=980' }
+      : querySelector(selector)
     scene.controller.startDocument()
     scene.controller.schedule()
     scene.controller.schedule()
@@ -231,10 +235,11 @@ async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneControlle
     scene.target.flushAnimationFrames(16)
     assert.deepEqual(
       scene.runtimeEvents.map(entry => entry.event),
-      ['stage-style', 'media-plane'],
-      'the first frame must sample stage style before clearing/reporting the media plane',
+      ['screen-size', 'stage-style', 'media-plane'],
+      'the first frame must report its declared canvas before sampling the media plane',
     )
-    assert.equal(scene.runtimeEvents[0].detail.backgroundColor, 'rgb(1, 2, 3)')
+    assert.deepEqual(scene.runtimeEvents[0].detail, { width: 980, height: 551 })
+    assert.equal(scene.runtimeEvents[1].detail.backgroundColor, 'rgb(1, 2, 3)')
     assert.equal(scene.target.pendingAnimationFrames(), 0, 'an idle plane must not poll forever')
   }
 
@@ -255,8 +260,8 @@ async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneControlle
     assert.equal(canvasStyle?.media, 'all')
 
     scene.target.flushAnimationFrames(16)
-    assert.equal(scene.runtimeEvents[0].event, 'stage-style')
-    assert.equal(scene.runtimeEvents[0].detail.backgroundColor, 'rgb(255, 255, 255)')
+    assert.equal(scene.runtimeEvents[1].event, 'stage-style')
+    assert.equal(scene.runtimeEvents[1].detail.backgroundColor, 'rgb(255, 255, 255)')
     assert.equal(canvasStyle?.media, 'all', 'the transparent canvas must be restored after sampling')
 
     scene.document.body.computed.backgroundColor = 'rgb(0, 0, 0)'
@@ -352,7 +357,7 @@ async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneControlle
     scene.target.flushAnimationFrames(32)
     assert.deepEqual(
       scene.runtimeEvents.map(entry => entry.event),
-      ['stage-style', 'media-plane'],
+      ['screen-size', 'stage-style', 'media-plane'],
       'a cancelled frame must not report after disposal',
     )
   }

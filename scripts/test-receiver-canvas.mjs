@@ -33,20 +33,29 @@ assert.deepEqual(controller.logicalSize, { width: 3840, height: 2160 })
 assert.equal(iframe.style.width, '3840px')
 assert.equal(iframe.style.height, '2160px')
 assert.equal(iframe.style.transform, 'scale(0.5)')
-assert.equal(viewport.style.aspectRatio, undefined)
+assert.equal(viewport.style.aspectRatio, '16 / 9')
 assert.equal(viewport.style.backgroundColor, 'unchanged')
 
 controller.applyScreenSize(1920, 1080)
 assert.deepEqual(controller.logicalSize, { width: 1920, height: 1080 })
-assert.equal(viewport.style.aspectRatio, '1920 / 1080')
+assert.equal(viewport.style.aspectRatio, '16 / 9')
 assert.equal(iframe.style.width, '1920px')
 assert.equal(iframe.style.height, '1080px')
 assert.equal(iframe.style.transform, 'scale(1)')
 
+viewport.clientWidth = 1280
+viewport.clientHeight = 720
+controller.applyScreenSize(980, 551)
+assert.equal(iframe.style.width, '980px')
+assert.equal(iframe.style.height, '551px')
+assert.equal(iframe.style.transform, `scale(${1280 / 980})`)
+assert.ok(551 * (1280 / 980) <= 720, 'a width-only logical canvas must fit without crop')
+assert.equal(viewport.style.aspectRatio, '16 / 9')
+
 viewport.clientWidth = 800
 viewport.clientHeight = 600
 resizeCallback([], {})
-assert.equal(iframe.style.transform, `scale(${800 / 1920})`)
+assert.equal(iframe.style.transform, `scale(${800 / 980})`)
 
 controller.setStageBackgroundColor('rgb(1, 2, 3)')
 assert.equal(viewport.style.backgroundColor, 'rgb(1, 2, 3)')
