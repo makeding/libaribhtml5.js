@@ -109,6 +109,10 @@ export class FakeElement {
     return this.attributes.has(name)
   }
 
+  getAttribute(name) {
+    return this.attributeValues?.get(name) ?? null
+  }
+
   getBoundingClientRect() {
     return this.box
   }

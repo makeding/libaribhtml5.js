@@ -25,6 +25,7 @@ export function runExternalMediaHoleContract(create) {
   preservesApplicationUpdatesWhileTheHoleIsActive(create)
   repeatedEnableKeepsFirstSnapshot(create)
   switchingObjectsRestoresThePreviousHole(create)
+  hidesAndRestoresOverlappingLegacyPluginPlaceholder(create)
   restoreReturnsEveryTrackedElement(create)
 }
 
@@ -33,6 +34,7 @@ export const externalMediaHoleCharacterizationCases = Object.freeze([
   'preserves application updates while the hole is active',
   'repeated enable keeps the first snapshot',
   'switching objects restores the previous hole',
+  'hides and restores an overlapping legacy plugin placeholder',
   'restore returns every tracked element',
 ])
 
@@ -170,6 +172,43 @@ function switchingObjectsRestoresThePreviousHole(create) {
   assert.equal(scene.wrapper.style.getPropertyValue('opacity'), '0.6')
   assert.equal(secondObject.style.getPropertyValue('opacity'), '0')
   assert.equal(secondWrapper.style.getPropertyValue('opacity'), '0')
+}
+
+function hidesAndRestoresOverlappingLegacyPluginPlaceholder(create) {
+  const scene = mediaScene()
+  const plugin = new FakeElement({
+    tagName: 'object',
+    id: 'legacy-flash-player',
+    box: rect(100, 200, 1280, 720),
+    style: { opacity: '0.8' },
+    computed: { opacity: '0.8' },
+    attributes: ['type'],
+  })
+  plugin.attributeValues = new Map([['type', 'application/x-shockwave-flash']])
+  const unrelatedPlugin = new FakeElement({
+    tagName: 'object',
+    id: 'unrelated-flash-player',
+    box: rect(1500, 200, 320, 180),
+    style: { opacity: '0.6' },
+    computed: { opacity: '0.6' },
+    attributes: ['type'],
+  })
+  unrelatedPlugin.attributeValues = new Map([['type', 'application/x-shockwave-flash']])
+  append(scene.document.body, plugin, unrelatedPlugin)
+  const controller = create(scene.target)
+
+  controller.set(scene.object, true)
+  assert.deepEqual(inlineStyleSnapshot(plugin, 'opacity').opacity, {
+    value: '0', priority: 'important',
+  })
+  assert.deepEqual(inlineStyleSnapshot(unrelatedPlugin, 'opacity').opacity, {
+    value: '0.6', priority: '',
+  })
+
+  controller.set(scene.object, false)
+  assert.deepEqual(inlineStyleSnapshot(plugin, 'opacity').opacity, {
+    value: '0.8', priority: '',
+  })
 }
 
 function restoreReturnsEveryTrackedElement(create) {

@@ -137,6 +137,24 @@ export class ExternalMediaHoleController {
     const objectRect = slot.rect
     const tolerance = 1
     let child = object
+
+    // Chromium paints an unsupported Flash/Silverlight object as a plugin
+    // placeholder even when the ARIB broadcast object below it is transparent.
+    // Only suppress a legacy plugin object when it occupies the exact video
+    // slot; unrelated plugin placeholders remain part of the application UI.
+    for (const candidate of this.target.document.querySelectorAll<HTMLElement>('body *')) {
+      if (candidate === object || candidate.tagName.toLowerCase() !== 'object') continue
+      const type = candidate.getAttribute('type')?.toLowerCase() ?? ''
+      if (!type.includes('shockwave-flash') && !type.includes('silverlight')) continue
+      const rect = candidate.getBoundingClientRect()
+      if (Math.abs(rect.left - objectRect.left) <= tolerance &&
+          Math.abs(rect.top - objectRect.top) <= tolerance &&
+          Math.abs(rect.width - objectRect.width) <= tolerance &&
+          Math.abs(rect.height - objectRect.height) <= tolerance) {
+        elements.push(candidate)
+      }
+    }
+
     for (let parent = object.parentElement;
       parent && parent !== this.target.document.body &&
       parent !== this.target.document.documentElement;
