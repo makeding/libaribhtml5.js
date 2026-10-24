@@ -21,6 +21,59 @@ export function createRuntimeBootstrap(scopePath = '/data-broadcast/'): string {
   const basePath = normalizeBasePath(scopePath)
   return `<script>
 (function installAribHtml5Runtime(attempt) {
+  var broadcastType = 'video/x-arib2-broadcast'
+  var scheduledObjects = new WeakSet()
+  function replaceBroadcastObject(object) {
+    if (!object || object.nodeType !== 1 ||
+        String(object.getAttribute('type') || '').trim().toLowerCase() !== broadcastType) return
+    var replacement = document.createElement('div')
+    for (var index = 0; index < object.attributes.length; index += 1) {
+      var attribute = object.attributes[index]
+      if (attribute.name.toLowerCase() === 'type') continue
+      replacement.setAttribute(attribute.name, attribute.value)
+    }
+    replacement.setAttribute('data-arib-object', broadcastType)
+    while (object.firstChild) replacement.appendChild(object.firstChild)
+    object.replaceWith(replacement)
+  }
+  function scanBroadcastObjects(root) {
+    if (!root) return
+    if (root.nodeType === 1 && root.matches && root.matches('object')) {
+      scheduleBroadcastObject(root)
+    }
+    if (!root.querySelectorAll) return
+    var objects = root.querySelectorAll('object')
+    for (var index = 0; index < objects.length; index += 1) {
+      scheduleBroadcastObject(objects[index])
+    }
+  }
+  function scheduleBroadcastObject(object) {
+    if (!object || scheduledObjects.has(object)) return
+    scheduledObjects.add(object)
+    setTimeout(function () {
+      scheduledObjects.delete(object)
+      replaceBroadcastObject(object)
+    }, 0)
+  }
+  function observeBroadcastObjects() {
+    scanBroadcastObjects(document)
+    if (!document.documentElement) {
+      queueMicrotask(observeBroadcastObjects)
+      return
+    }
+    var observer = new MutationObserver(function (records) {
+      for (var recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+        var record = records[recordIndex]
+        for (var nodeIndex = 0; nodeIndex < record.addedNodes.length; nodeIndex += 1) {
+          scanBroadcastObjects(record.addedNodes[nodeIndex])
+        }
+      }
+    })
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+  }
+  if (typeof document !== 'undefined' && typeof MutationObserver === 'function') {
+    observeBroadcastObjects()
+  }
   var install
   try {
     install = parent && parent.__ARIB_HTML5_INSTALL__
@@ -68,17 +121,9 @@ function normalizeBasePath(value: string | undefined): string {
 }
 
 export function rewriteBroadcastObjectMarkup(source: string): string {
-  return source.replace(/<object\b[^>]*>/gi, tag => {
-    const broadcast = /\btype\s*=\s*(?:["']video\/x-arib2-broadcast["']|video\/x-arib2-broadcast)(?:\s|\/?>)/i
-      .test(tag)
-    if (!broadcast) return tag
-    return tag
-      .replace(
-        /\s+type\s*=\s*(?:["']video\/x-arib2-broadcast["']|video\/x-arib2-broadcast)/i,
-        ' data-arib-type="video/x-arib2-broadcast"',
-      )
-      .replace(/\s+data\s*=\s*(["'])(.*?)\1/i, ' data-arib-data=$1$2$1')
-  })
+  // Keep the original object markup so the document-side bootstrap can see the
+  // type attribute and replace the actual element after its children are parsed.
+  return source
 }
 
 function receiverPath(path: string, base: string, scope: string): string {

@@ -15,7 +15,7 @@ const preparedHtml = prepareBroadcastHtml(
   { bootstrap: '<script>install()</script>' },
 )
 assert.match(preparedHtml, /<head><script>install\(\)<\/script>/)
-assert.match(preparedHtml, /data-arib-type="video\/x-arib2-broadcast"/)
+assert.match(preparedHtml, /<object type="video\/x-arib2-broadcast"/)
 assert.match(preparedHtml, /data-arib-romsound="romsound:\/\/9"/)
 assert.match(preparedHtml, /src="\/data-broadcast\/sh4\/app\.js"/)
 
@@ -33,6 +33,7 @@ const bootstrapContext = {
     scheduledBootstrap.push(callback)
   },
   URL,
+  document: undefined,
 }
 bootstrapContext.window = bootstrapContext
 vm.runInNewContext(bootstrapSource, bootstrapContext)

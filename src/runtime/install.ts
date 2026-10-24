@@ -124,6 +124,27 @@ function overrideNavigatorUserAgent(target: Navigator, value: string): () => voi
   }
 }
 
+/**
+ * Replace the browser's unsupported broadcast plugin element with the runtime
+ * media slot before the application starts inspecting the document.
+ */
+function replaceBroadcastObjects(target: RuntimeWindow): void {
+  const objects = target.document.querySelectorAll<HTMLElement>(
+    'object[type="video/x-arib2-broadcast"]',
+  )
+  for (const object of objects) {
+    const replacement = target.document.createElement('div')
+    for (const attribute of Array.from(object.attributes)) {
+      if (attribute.name.toLowerCase() !== 'type') {
+        replacement.setAttribute(attribute.name, attribute.value)
+      }
+    }
+    replacement.setAttribute('data-arib-object', 'video/x-arib2-broadcast')
+    while (object.firstChild !== null) replacement.append(object.firstChild)
+    object.replaceWith(replacement)
+  }
+}
+
 export function installRuntime(target: RuntimeWindow, options: RuntimeOptions = {}): void {
   if (target.__ARIB_HTML5_RUNTIME__) return
   target.__ARIB_HTML5_RUNTIME__ = 'installing'
@@ -382,6 +403,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
   })
 
   const startDocumentRuntime = () => {
+    // The document-side bootstrap normally performs this replacement while
+    // parsing.  Keep the runtime entry point authoritative as well, because
+    // restored documents and direct host installs can skip that bootstrap.
+    replaceBroadcastObjects(target)
     applicationController.startDocument()
     // Static objects need their receiver API before application ready listeners run.
     // Stage sampling remains deferred to the controller's first animation frame.

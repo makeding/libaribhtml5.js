@@ -17,8 +17,8 @@ type RuntimeMediaPlaneControllerOptions = {
 }
 
 const mediaObjectSelector =
-  'object[type="video/x-arib2-broadcast"], ' +
-  'object[data-arib-type="video/x-arib2-broadcast"]'
+  '[data-arib-object="video/x-arib2-broadcast"], ' +
+  'object[type="video/x-arib2-broadcast"]'
 
 const mediaAnimationEvents = [
   'animationstart',
@@ -206,7 +206,14 @@ export class RuntimeMediaPlaneController {
     if (!this.observing || this.disposed || this.mutationObserver === null) return
     this.mutationObserver.observe(this.target.document.documentElement, {
       attributes: true,
-      attributeFilter: ['class', 'style', 'type', 'data-arib-type', 'name', 'value'],
+      attributeFilter: [
+        'class',
+        'style',
+        'type',
+        'data-arib-object',
+        'name',
+        'value',
+      ],
       childList: true,
       subtree: true,
     })
