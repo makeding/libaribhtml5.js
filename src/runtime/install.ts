@@ -133,7 +133,9 @@ function replaceBroadcastObjects(target: RuntimeWindow): void {
     'object[type="video/x-arib2-broadcast"]',
   )
   for (const object of objects) {
-    const replacement = target.document.createElement('div')
+    // Keep broadcaster object/video sizing rules; a div loses them and collapses to zero height.
+    // This source-less element is only the slot; the host's existing video keeps playing.
+    const replacement = target.document.createElement('video')
     for (const attribute of Array.from(object.attributes)) {
       if (attribute.name.toLowerCase() !== 'type') {
         replacement.setAttribute(attribute.name, attribute.value)

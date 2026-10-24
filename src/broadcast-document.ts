@@ -26,7 +26,9 @@ export function createRuntimeBootstrap(scopePath = '/data-broadcast/'): string {
   function replaceBroadcastObject(object) {
     if (!object || object.nodeType !== 1 ||
         String(object.getAttribute('type') || '').trim().toLowerCase() !== broadcastType) return
-    var replacement = document.createElement('div')
+    // Keep broadcaster object/video sizing rules; a div loses them and collapses to zero height.
+    // This source-less element is only the slot; the host's existing video keeps playing.
+    var replacement = document.createElement('video')
     for (var index = 0; index < object.attributes.length; index += 1) {
       var attribute = object.attributes[index]
       if (attribute.name.toLowerCase() === 'type') continue
