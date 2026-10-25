@@ -293,6 +293,38 @@ export class RuntimeMediaPlaneController {
     this.activeMediaObject = null
   }
 
+  /** A foreground surface must not cover opaque application dialogs above its slot. */
+  private isCoveredByApplication(object: HTMLElement, rect: DOMRect): boolean {
+    const document = this.target.document
+    if (typeof document.elementsFromPoint !== 'function') return false
+    // Browser hit-test order includes stacking contexts. Comparing raw z-index
+    // values would incorrectly promote descendants of a lower stacking context.
+    const elements = document.elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+    const slotIndex = elements.indexOf(object)
+    if (slotIndex < 0) return false
+    for (const element of elements.slice(0, slotIndex)) {
+      if (element.contains(object) || object.contains(element)) continue
+      const style = this.target.getComputedStyle(element)
+      // Only a solid, opaque rectangle can fully occlude the surface. Transparent
+      // controls must continue showing the video underneath them.
+      if (!style.backgroundColor.startsWith('rgb(') || style.clipPath !== 'none' ||
+          style.borderRadius !== '0px') continue
+      let opaque = true
+      for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+        const ancestorStyle = this.target.getComputedStyle(ancestor)
+        if (Number(ancestorStyle.opacity) < 1 || ancestorStyle.visibility !== 'visible') {
+          opaque = false
+          break
+        }
+      }
+      if (!opaque) continue
+      const cover = element.getBoundingClientRect()
+      if (cover.left <= rect.left && cover.top <= rect.top &&
+          cover.right >= rect.right && cover.bottom >= rect.bottom) return true
+    }
+    return false
+  }
+
   private reportMediaPlane(): void {
     // The HTML application canvas has its own declared logical resolution,
     // even when it does not contain an ARIB broadcast-media object.
@@ -361,6 +393,11 @@ export class RuntimeMediaPlaneController {
           : 'behind-application',
       },
     }
+    // Keep the slot geometry and compositor placement unchanged. Suppress only
+    // the external surface while an opaque, higher application panel covers it.
+    if (this.adapter?.renderMode === 'external' && plane.visible &&
+        plane.layer.externalPlacement === 'above-application' &&
+        this.isCoveredByApplication(object, rect)) plane.visible = false
     const message = JSON.stringify(plane)
     if (object !== this.activeMediaObject) {
       if (this.activeMediaObject) this.unmountMediaPlane('slot-removed')

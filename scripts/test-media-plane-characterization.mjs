@@ -222,6 +222,38 @@ function runtimeScene(RuntimeMediaPlaneController) {
 async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneController) {
   {
     const scene = runtimeScene(RuntimeMediaPlaneController)
+    scene.wrapper.computed.zIndex = '10'
+    scene.overlay.computed.clipPath = 'none'
+    scene.overlay.computed.borderRadius = '0px'
+    let panelOpen = false
+    scene.document.elementsFromPoint = () => panelOpen
+      ? [scene.overlay, scene.object, scene.wrapper, scene.document.body]
+      : [scene.object, scene.wrapper, scene.overlay, scene.document.body]
+    scene.controller.startDocument()
+    scene.target.flushAnimationFrames(16)
+    const original = scene.adapterEvents.at(-1).plane
+    assert.equal(original.visible, true)
+    panelOpen = true
+    scene.controller.schedule()
+    scene.target.flushAnimationFrames(32)
+    assert.deepEqual(scene.adapterEvents.at(-1).plane, { ...original, visible: false },
+      'a higher opaque panel covering the complete slot must occlude external video')
+    scene.overlay.computed.opacity = '0.5'
+    scene.controller.schedule()
+    scene.target.flushAnimationFrames(48)
+    assert.equal(scene.adapterEvents.at(-1).plane.visible, true,
+      'a translucent panel must not suppress the complete video')
+    scene.overlay.computed.opacity = '1'
+    panelOpen = false
+    scene.controller.schedule()
+    scene.target.flushAnimationFrames(64)
+    assert.deepEqual(scene.adapterEvents.at(-1).plane, original,
+      'closing the panel restores the exact original media plane')
+    scene.controller.dispose('document-unload')
+  }
+
+  {
+    const scene = runtimeScene(RuntimeMediaPlaneController)
     const original = inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image')
     scene.wrapper.computed.zIndex = '10'
     scene.controller.startDocument()
