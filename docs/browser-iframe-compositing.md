@@ -37,6 +37,8 @@ receiver runtime は object が wrapper の唯一の子である場合に限り 
 iframe より前の layer に置きます。標準の `BehindIframeMediaPlaneAdapter` は通常 `z=0`、この場合だけ
 `z=2` を使います（必要なら `behindZIndex` / `aboveZIndex` で host の stacking context に合わせます）。
 通常の全面映像や application background として使われる slot は `behind-application` のままです。
+`above-application` では背景に穴を開ける必要がないため、object / media-only wrapper の透明化だけを行い、
+application element の背景色・背景画像は保持します。後景から前景へ切り替わる場合は退避した背景を復元します。
 
 `display: none`、`visibility: hidden`、`content-visibility: hidden` は矩形計測または可視判定を壊すため
 使用しません。runtime は隠す前の computed opacity を media-plane report に使い、host 側の video は

@@ -374,6 +374,7 @@ export class RuntimeMediaPlaneController {
     this.externalMediaHole.set(
       object,
       (this.adapter?.renderMode ?? 'external') === 'external',
+      plane.layer.externalPlacement !== 'above-application',
     )
     if (message === this.lastMediaPlane) return
     this.lastMediaPlane = message

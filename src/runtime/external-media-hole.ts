@@ -23,9 +23,11 @@ export class ExternalMediaHoleController {
     this.target = target
   }
 
-  set(object: HTMLElement, enabled: boolean): void {
+  set(object: HTMLElement, enabled: boolean, clearBackgrounds = true): void {
     this.setPlaceholder(object, enabled)
-    if (!enabled) {
+    // Foreground video already paints above the application. Keep its backdrop
+    // intact while still hiding the unsupported object and media-only wrapper.
+    if (!enabled || !clearBackgrounds) {
       this.restoreBackgrounds()
       return
     }

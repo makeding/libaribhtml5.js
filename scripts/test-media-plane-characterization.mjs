@@ -222,6 +222,31 @@ function runtimeScene(RuntimeMediaPlaneController) {
 async function runRuntimeMediaPlaneControllerContract(RuntimeMediaPlaneController) {
   {
     const scene = runtimeScene(RuntimeMediaPlaneController)
+    const original = inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image')
+    scene.wrapper.computed.zIndex = '10'
+    scene.controller.startDocument()
+    scene.target.flushAnimationFrames(16)
+    assert.equal(scene.adapterEvents.at(-1).plane.layer.externalPlacement, 'above-application')
+    assert.deepEqual(inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image'), original,
+      'foreground slots must preserve application backgrounds')
+    assert.equal(scene.object.style.getPropertyValue('opacity'), '0')
+    assert.equal(scene.wrapper.style.getPropertyValue('opacity'), '0')
+
+    scene.wrapper.computed.zIndex = 'auto'
+    scene.controller.schedule()
+    scene.target.flushAnimationFrames(32)
+    assert.equal(scene.overlay.style.getPropertyValue('background-color'), 'transparent')
+
+    scene.wrapper.computed.zIndex = '10'
+    scene.controller.schedule()
+    scene.target.flushAnimationFrames(48)
+    assert.deepEqual(inlineStyleSnapshot(scene.overlay, 'background-color', 'background-image'), original,
+      'returning to foreground must restore a previously cleared background')
+    scene.controller.dispose('document-unload')
+  }
+
+  {
+    const scene = runtimeScene(RuntimeMediaPlaneController)
     const querySelector = scene.document.querySelector.bind(scene.document)
     scene.document.querySelector = selector => selector === 'meta[name="viewport"]'
       ? { content: 'width=980' }
