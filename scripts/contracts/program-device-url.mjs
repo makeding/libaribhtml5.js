@@ -6,7 +6,7 @@ import {
   normalizeBroadcastBaseUrl,
   resolveBroadcastUrl,
 } from '../../src/broadcast-url.ts'
-import { cloneProgramInfo } from '../../src/program-info.ts'
+import { cloneProgramInfo, hasChangedPresentEvent } from '../../src/program-info.ts'
 import {
   DEFAULT_RECEIVER_DEVICE_IDENTIFIER,
   getDefaultReceiverIrdId,
@@ -24,6 +24,14 @@ assert.notEqual(program.start_time, programStart)
 assert.equal(program.start_time.getTime(), programStart.getTime())
 const iframeDate = vm.runInNewContext('new Date("2026-07-31T12:00:00Z")')
 assert.equal(cloneProgramInfo({ start_time: iframeDate }).start_time.getTime(), programStart.getTime())
+const event = { original_network_id: 11, transport_stream_id: 45169, service_id: 171, event_id: 42 }
+assert.equal(hasChangedPresentEvent(null, event), false)
+assert.equal(hasChangedPresentEvent(event, { ...event, name: 'Updated title' }), false)
+assert.equal(hasChangedPresentEvent(event, { ...event, f_event_id: 43 }), false)
+assert.equal(hasChangedPresentEvent({ event_id: 42 }, event), false)
+assert.equal(hasChangedPresentEvent(event, { ...event, event_id: 43 }), true)
+assert.equal(hasChangedPresentEvent(event, { ...event, service_id: 172 }), true)
+assert.equal(hasChangedPresentEvent(event, null), false)
 assert.throws(() => cloneProgramInfo({ start_time: '2026-07-31T12:00:00Z' }), /valid Date/)
 assert.throws(() => cloneProgramInfo({ duration: -1 }), /millisecond duration/)
 assert.equal(await resolveReceiverDeviceIdentifier(0), DEFAULT_RECEIVER_DEVICE_IDENTIFIER)

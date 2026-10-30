@@ -29,6 +29,11 @@ export type {
   DomObjectMediaPlaneAdapterOptions,
 } from './media-plane'
 export { installRuntime } from './runtime/install'
+export type {
+  ReceiverCapabilitiesOptions,
+  ReceiverInputSource,
+  ReceiverMedia,
+} from './runtime/capabilities'
 export {
   createReceiverSystemInformation,
   readReceiverInformationArray,

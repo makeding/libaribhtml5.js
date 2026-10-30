@@ -1,4 +1,5 @@
 import type { ReceiverDeviceIdentifierProvider } from '../device-identifier'
+import type { ReceiverCapabilitiesOptions } from '../runtime/capabilities'
 import type { AribMediaPlane, AribMediaPlaneAdapter } from '../media-plane'
 import type {
   AribProgramGuideHandler,
@@ -53,7 +54,7 @@ export type AribReceiverLifecycleEvent =
   | { type: 'frame-blocked'; url: string }
   | { type: 'error'; message: string }
 
-export type AribReceiverHostOptions = {
+export type AribReceiverHostOptions = ReceiverCapabilitiesOptions & {
   iframe: HTMLIFrameElement
   viewport: HTMLElement
   /** Surface used only by the behind-iframe compatibility adapter. */

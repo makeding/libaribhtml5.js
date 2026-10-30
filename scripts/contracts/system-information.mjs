@@ -58,7 +58,12 @@ synchronizeReceiverCompatibilityStorage(
     zipcode: 'invalid',
   }),
 )
-assert.equal(receiverCompatibilityStorage.has('_zipcode'), false)
+assert.equal(receiverCompatibilityStorage.get('_zipcode'), '')
+synchronizeReceiverCompatibilityStorage(
+  receiverStorage,
+  createReceiverSystemInformation('https://receiver.example/data-broadcast/'),
+)
+assert.equal(receiverCompatibilityStorage.get('_zipcode'), '')
 assert.equal(
   readReceiverInformationArray('application/private', 'zipcode', regionalSystemInformation),
   null,

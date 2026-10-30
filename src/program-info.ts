@@ -37,6 +37,14 @@ const IDENTIFIER_FIELDS = [
 const DATE_FIELDS = ['start_time', 'f_start_time'] as const
 const DURATION_FIELDS = ['duration', 'f_duration'] as const
 
+/** Initial acquisition and metadata enrichment are not present-event changes. */
+export function hasChangedPresentEvent(previous: ProgramInfo | null, next: ProgramInfo | null): boolean {
+  if (previous?.event_id === undefined || next?.event_id === undefined) return false
+  return ['original_network_id', 'transport_stream_id', 'service_id', 'event_id'].some(field =>
+    previous[field] !== undefined && next[field] !== undefined && previous[field] !== next[field],
+  )
+}
+
 /** Validate and detach program information before it crosses the host boundary. */
 export function cloneProgramInfo(value: ProgramInfo): ProgramInfo {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

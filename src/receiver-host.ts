@@ -6,6 +6,7 @@ import {
 import { makeIframePointerTransparent } from './iframe-input'
 import { cloneProgramInfo, type ProgramInfo } from './program-info'
 import type { ReceiverSystemInformationOverrides } from './runtime/system-information'
+import type { ReceiverCapabilitiesOptions } from './runtime/capabilities'
 import type { ReceiverDeviceIdentifierProvider } from './device-identifier'
 import {
   BehindIframeMediaPlaneAdapter,
@@ -104,6 +105,8 @@ export class AribReceiverHost {
   private readonly onLaunchDataBroadcastingBrowser?: AribLaunchDataBroadcastingBrowserHandler
   private readonly onProgramGuideUnavailable?: AribProgramGuideUnavailableHandler
   private readonly systemInformation?: ReceiverSystemInformationOverrides
+  private readonly supportedMedia: ReceiverCapabilitiesOptions['supportedMedia']
+  private readonly getInputSource: ReceiverCapabilitiesOptions['getInputSource']
   private readonly getDeviceIdentifier?: ReceiverDeviceIdentifierProvider
   private readonly bmlGreg: string[]
   private readonly userAgent?: string
@@ -183,6 +186,8 @@ export class AribReceiverHost {
     this.onLaunchDataBroadcastingBrowser = options.onLaunchDataBroadcastingBrowser
     this.onProgramGuideUnavailable = options.onProgramGuideUnavailable
     this.systemInformation = options.systemInformation
+    this.supportedMedia = options.supportedMedia === undefined ? undefined : [...options.supportedMedia]
+    this.getInputSource = options.getInputSource
     this.getDeviceIdentifier = options.getDeviceIdentifier
     this.bmlGreg = [...(options.bmlGreg ?? [])]
     this.userAgent = options.userAgent
@@ -212,6 +217,8 @@ export class AribReceiverHost {
       mediaPlaneAdapter: this.runtimeMediaPlaneAdapter,
       now: () => this.getBroadcastTime(),
       systemInformation: this.systemInformation,
+      supportedMedia: this.supportedMedia,
+      getInputSource: this.getInputSource,
       getDeviceIdentifier: this.getDeviceIdentifier,
       application: this.applicationInformation,
       bmlGreg: this.bmlGreg,

@@ -49,7 +49,7 @@ export function synchronizeReceiverCompatibilityStorage(
   const zipcode = typeof supplied === 'string' ? supplied.replace('-', '') : ''
   try {
     if (/^\d{7}$/.test(zipcode)) storage.setItem('_zipcode', zipcode)
-    else storage.removeItem('_zipcode')
+    else storage.setItem('_zipcode', '')
   } catch {
     // Disabled DOM storage must not prevent runtime installation.
   }

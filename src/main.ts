@@ -25,6 +25,8 @@ const host = new AribReceiverHost({
   iframe,
   viewport,
   videoSurface,
+  supportedMedia: ['6'],
+  getInputSource: () => 'recorded',
   mediaPlaneAdapter: new DomObjectMediaPlaneAdapter({
     media: video,
     normalPlayerContainer: videoSurface,

@@ -2,6 +2,8 @@
 
 `src/runtime/romsound/*.mp3` contains receiver built-in sound data restored from
 [web-bml](https://github.com/otya128/web-bml), used under the MIT License.
+The binary field layout in `src/runtime/persistent-storage.ts` is adapted from
+the same project's `client/binary_table.ts`.
 
 Copyright (c) 2022 otya
 

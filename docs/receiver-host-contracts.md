@@ -58,6 +58,42 @@ read-only through the legacy `receiverinfo` Ureg used by broadcaster apps. The
 host owns persistence and passes a snapshot; writes inside the app do not flow
 back into the host's settings.
 
+## Receiver capabilities and input source
+
+The SDK owns `navigator.capabilities.hasCapability()` and
+`receiverDevice.streamEvent.sourceIs()`. Hosts declare their supported media
+using `supportedMedia` (TR-B39 Table 14-4) and provide
+`getInputSource: () => 'onair' | 'recorded' | null` from their actual input.
+An undeclared source never reports live reception. Only the standard query
+`sourceIs('onair')` can return true; other names return false. Unknown
+capability queries and parameters return false. APIGroup queries reflect
+implemented APIs, rather than granting permission to use them. Applications
+retain the existing MH-AIT permission checks.
+
+Missing regional information remains missing. The legacy `_zipcode` key is
+always a string: an empty string represents an unset or invalid postcode.
+No fabricated postcode is persisted.
+
+## Persistent arrays and event updates
+
+Persistent-array structures describe ordered binary fields, not property
+names. Repeated formats, prefix reads, signed/unsigned integers, booleans,
+fixed/variable UTF-8 strings and padding retain their byte/bit positions.
+Writes return the encoded byte count; absent or unreadable data returns null.
+Invalid structures raise INVALID_PARAM_ERR; storage failures return NaN on
+write and null on read. Receiver-owned regional data remains read-only.
+Previously stored descriptor-keyed records can only be recovered when every
+stored field has a distinct format; ambiguous records remain untouched and
+report an unreadable result until the application writes them again.
+The SDK persistent-storage module owns this released-0.2.0 reader; its removal
+deadline is v1.0.0, after existing records have been rewritten by their owning
+applications. `scripts/contracts/persistent-arrays.mjs` covers the recovery
+boundary and ambiguous-record rejection.
+
+Event ID listeners run when a known present event changes identity (network,
+transport stream, service or event ID). Metadata-only refreshes and initial
+acquisition are silent. Clearing programme information resets that baseline.
+
 ## HTML application canvas
 
 The runtime reads `width` and `height` from the document's

@@ -1,4 +1,10 @@
 import { installRomSoundProtocol } from './romsound.ts'
+import { createPersistentArrayStorage } from './persistent-storage'
+import {
+  createReceiverCapabilities,
+  receiverSourceIs,
+  type ReceiverCapabilitiesOptions,
+} from './capabilities'
 import { installAribSymbolFont } from './fonts'
 import { installBroadcastClock, type BroadcastNowProvider } from './clock'
 import type { AribMediaPlaneAdapter } from '../media-plane'
@@ -18,7 +24,7 @@ import {
   synchronizeReceiverCompatibilityStorage,
   type ReceiverSystemInformationOverrides,
 } from './system-information'
-import { cloneProgramInfo, type ProgramInfo } from '../program-info'
+import { cloneProgramInfo, hasChangedPresentEvent, type ProgramInfo } from '../program-info'
 import {
   getDefaultReceiverIrdId,
   resolveReceiverDeviceIdentifier,
@@ -57,7 +63,7 @@ export type { RuntimeApplicationInformation } from './application-controller'
 
 export type RuntimeWindow = Window & typeof globalThis & Record<string, unknown>
 
-export type RuntimeOptions = {
+export type RuntimeOptions = ReceiverCapabilitiesOptions & {
   /** Permit HTTP requests outside the receiver-managed application origin. */
   allowExternalNetwork?: boolean
   /** Same-origin namespace where receiver-managed broadcast resources live. */
@@ -230,6 +236,7 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     if (event.data?.type !== 'arib-host' || event.data.runtimeId !== runtimeId) return
     if (captionController.handleHostMessage(event.data)) return
     if (event.data.event === 'program-info') {
+      const previousProgramInfo = programInfo
       try {
         programInfo = event.data.value === null
           ? null
@@ -238,7 +245,9 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
         postRuntime('error', { message: `Invalid program information: ${String(error)}` })
         return
       }
-      for (const listener of eventIdListeners) queueMicrotask(listener)
+      if (hasChangedPresentEvent(previousProgramInfo, programInfo)) {
+        for (const listener of eventIdListeners) queueMicrotask(listener)
+      }
       return
     }
     if (event.data.event === 'application-information') {
@@ -279,6 +288,8 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
     options.systemInformation,
   )
   synchronizeReceiverCompatibilityStorage(target.localStorage, systemInformation)
+  const persistentArrays = createPersistentArrayStorage(target.localStorage)
+  defineNavigatorProperty(target.navigator, 'capabilities', createReceiverCapabilities(options))
 
   defineNavigatorProperty(target.navigator, 'receiverDevice', {
     confirmIPNetwork: () => options.allowExternalNetwork ?? false,
@@ -320,6 +331,10 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       },
     },
     streamEvent: {
+      sourceIs: (name: string) => {
+        requirePermission(ARIB_PERMISSION_BITS.broadcastResources)
+        return receiverSourceIs(options, name)
+      },
       addGeneralEventMessageListener: (
         selector: RuntimeEventSelector,
         callback: (event: RuntimeEvent) => void,
@@ -376,20 +391,15 @@ function installRuntimeImplementation(target: RuntimeWindow, options: RuntimeOpt
       },
       readPersistentArray: (namespace: string, structure: string) => {
         requirePermission(ARIB_PERMISSION_BITS.persistentStorage)
-        const raw = target.localStorage.getItem(`arib:nvram:${namespace}`)
-        if (raw) {
-          const value = JSON.parse(raw) as Record<string, unknown>
-          return structure.split(',').map((field) => value[field] ?? null)
+        if (namespace.toLowerCase().includes('receiverinfo')) {
+          return readReceiverInformationArray(namespace, structure, systemInformation)
         }
-        return readReceiverInformationArray(namespace, structure, systemInformation)
+        return persistentArrays.read(namespace, structure)
       },
       writePersistentArray: (namespace: string, structure: string, values: unknown[]) => {
         requirePermission(ARIB_PERMISSION_BITS.persistentStorage)
-        const output = Object.fromEntries(
-          structure.split(',').map((field, index) => [field, values[index]]),
-        )
-        target.localStorage.setItem(`arib:nvram:${namespace}`, JSON.stringify(output))
-        return values.length
+        if (namespace.toLowerCase().includes('receiverinfo')) return NaN
+        return persistentArrays.write(namespace, structure, values)
       },
     },
   })
