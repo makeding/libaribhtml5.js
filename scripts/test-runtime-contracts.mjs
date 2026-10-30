@@ -11,5 +11,6 @@ await import('./contracts/broadcast-document.mjs')
 await import('./contracts/program-guide.mjs')
 await import('./contracts/resource-cache.mjs')
 await import('./contracts/vfs-session.mjs')
+await import('./test-tv-input.mjs')
 
 console.log('runtime URL and resource lifecycle contracts passed')

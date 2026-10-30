@@ -60,6 +60,12 @@ back into the host's settings.
 
 ## Receiver capabilities and input source
 
+Receiver keys are queued into the application document's own JavaScript realm.
+The host accepts the key synchronously, while keydown/keyup run together in a
+child-window message task. This preserves document-relative navigation in
+broadcaster handlers, including Safari's incumbent-document URL resolution.
+Keys queued for a replaced document are discarded.
+
 The SDK owns `navigator.capabilities.hasCapability()` and
 `receiverDevice.streamEvent.sourceIs()`. Hosts declare their supported media
 using `supportedMedia` (TR-B39 Table 14-4) and provide

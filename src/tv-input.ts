@@ -10,26 +10,42 @@ export function configureTvReceiverIframe(iframe: TvReceiverIframe): void {
   iframe.tabIndex = -1
 }
 
-/** Dispatch a receiver key in the child browsing context that owns the application DOM. */
+const keyBridges = new WeakMap<Document, string>()
+
+/** Queue a receiver key in the child browsing context that owns the application DOM. */
 export function dispatchReceiverKey(iframe: TvReceiverIframe, code: number): boolean {
   const target = iframe.contentWindow
   if (!target || !Number.isInteger(code)) return false
   try {
-    const eventWindow = target as Window & typeof globalThis
     const document = target.document
-    const eventTarget = document.activeElement ?? document.body ?? document.documentElement ?? document
-    for (const type of ['keydown', 'keyup']) {
-      const event = new eventWindow.KeyboardEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        view: target,
-      })
-      Object.defineProperties(event, {
-        keyCode: { value: code },
-        which: { value: code },
-      })
-      eventTarget.dispatchEvent(event)
+    let token = keyBridges.get(document)
+    if (token === undefined) {
+      token = crypto.randomUUID()
+      const script = document.createElement('script')
+      // A child-realm listener and a fresh message task make this document the
+      // incumbent document. Direct parent dispatch makes Safari resolve a
+      // broadcaster's relative location assignment against the host page.
+      script.textContent = `(() => {
+        const token = ${JSON.stringify(token)};
+        window.addEventListener('message', event => {
+          if (event.source !== parent || event.origin !== location.origin ||
+              event.data?.type !== 'arib-receiver-key' || event.data.token !== token ||
+              !Number.isInteger(event.data.code)) return;
+          const eventTarget = document.activeElement ?? document.body ?? document.documentElement ?? document;
+          for (const type of ['keydown', 'keyup']) {
+            const key = new KeyboardEvent(type, {bubbles: true, cancelable: true, view: window});
+            Object.defineProperties(key, {
+              keyCode: {value: event.data.code}, which: {value: event.data.code}
+            });
+            eventTarget.dispatchEvent(key);
+          }
+        });
+      })()`
+      document.documentElement.appendChild(script)
+      script.remove()
+      keyBridges.set(document, token)
     }
+    target.postMessage({ type: 'arib-receiver-key', token, code }, target.location.origin)
     return true
   } catch {
     return false
